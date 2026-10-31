@@ -1,9 +1,11 @@
-/* sw.js - Abre al instante con lo guardado y se actualiza en segundo plano. Cambie VERSION al subir archivos nuevos. */
-var VERSION = 'auditoria-B2.0';
-var ARCHIVOS = ['./', 'index.html', 'estilos.css', 'datos.js', 'calc.js', 'diario.js', 'xlsx.js', 'docs.js', 'vistas2.js', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+/* sw.js - Red primero (máx. 3 s) y, si no hay internet, lo guardado. Sube VERSION al publicar cambios. */
+var VERSION = 'auditoria-B2.1';
+var ARCHIVOS = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
-  e.waitUntil(caches.open(VERSION).then(function (c) { return Promise.all(ARCHIVOS.map(function (a) { return c.add(a).catch(function () { /* un archivo ausente no debe impedir la instalación */ }); })); }).then(function () { return self.skipWaiting(); }));
+  e.waitUntil(caches.open(VERSION).then(function (c) {
+    return Promise.all(ARCHIVOS.map(function (a) { return fetch(a, { cache: 'no-cache' }).then(function (r) { if (r.ok) return c.put(a, r); }).catch(function () { /* sin red */ }); }));
+  }).then(function () { return self.skipWaiting(); }));
 });
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (ks) {
@@ -13,10 +15,11 @@ self.addEventListener('activate', function (e) {
 self.addEventListener('fetch', function (e) {
   if (e.request.method !== 'GET') return;
   e.respondWith(caches.open(VERSION).then(function (c) {
-    return c.match(e.request, { ignoreSearch: true }).then(function (hit) {
-      var red = fetch(e.request).then(function (r) { if (r && r.ok) c.put(e.request, r.clone()); return r; }).catch(function () { return hit || c.match('index.html'); });
-      return hit || red;
+    var red = new Promise(function (ok, no) {
+      var t = setTimeout(function () { no(new Error('lento')); }, 3000);
+      fetch(e.request, { cache: 'no-cache' }).then(function (r) { clearTimeout(t); if (r && r.ok) c.put(e.request, r.clone()); ok(r); }, function (er) { clearTimeout(t); no(er); });
     });
+    return red.catch(function () { return c.match(e.request, { ignoreSearch: true }).then(function (h) { return h || c.match('index.html'); }); });
   }));
 });
 /* FIN DEL ARCHIVO sw.js */
