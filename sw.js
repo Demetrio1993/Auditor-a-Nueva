@@ -1,5 +1,5 @@
 /* sw.js - Red primero (máx. 3 s) y, si no hay internet, lo guardado. Sube VERSION al publicar cambios. */
-var VERSION = 'auditoria-B2.1';
+var VERSION = 'auditoria-B2.2';
 var ARCHIVOS = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {

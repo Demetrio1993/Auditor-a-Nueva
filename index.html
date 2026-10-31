@@ -1906,6 +1906,65 @@ function bloqueoIniciar() {
 
 </script>
 <script>
+/* instalar.js - Botón de instalación, diagnóstico y reparación (solo toca esta app, no otros sitios) */
+var INST = { evento: null, instalada: false };
+window.addEventListener('beforeinstallprompt', function (ev) { ev.preventDefault(); INST.evento = ev; if (typeof render === 'function' && !ESTADO.actual) render(); });
+window.addEventListener('appinstalled', function () { INST.instalada = true; INST.evento = null; });
+
+function modoApp() { return (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; }
+function cardInstalar() {
+  var h = '<section class="card"><h2>Instalar en el celular</h2>';
+  if (modoApp()) h += '<p class="mut">Está usando la app instalada (se abre sin la barra de Chrome).</p>';
+  else if (INST.evento) h += '<p class="mut">Su navegador permite instalarla como programa.</p><div class="botones"><button class="btn" data-act="instalarYa">Instalar como programa</button></div>';
+  else h += '<p class="mut">Chrome todavía no ofrece instalarla como programa. Toque "Diagnóstico" para ver la causa.</p>';
+  h += '<div class="botones"><button class="btn sec" data-act="diag">Diagnóstico</button><button class="btn sec" data-act="reparar">Reparar instalación</button></div><div id="diagOut" class="mut"></div>' +
+    '<p class="mut">Versión ' + VERSION_APP + '</p></section>';
+  return h;
+}
+function diagLinea(ok, t) { return '<li class="' + (ok ? 'ok' : 'no') + '">' + (ok ? '✔ ' : '✘ ') + esc(t) + '</li>'; }
+function diagnostico() {
+  var out = document.getElementById('diagOut'), L = [];
+  if (!out) return;
+  out.innerHTML = 'Revisando…';
+  L.push(diagLinea(location.protocol === 'https:', 'Dirección segura (https)'));
+  L.push(diagLinea(modoApp(), modoApp() ? 'Abierta como app instalada' : 'Abierta dentro de Chrome (no como app)'));
+  L.push(diagLinea(!!INST.evento, INST.evento ? 'Chrome ofrece instalar' : 'Chrome no ofrece instalar en este momento'));
+  var tareas = [];
+  tareas.push(('serviceWorker' in navigator ? navigator.serviceWorker.getRegistration() : Promise.resolve(null)).then(function (r) {
+    L.push(diagLinea(!!(r && r.active), r && r.active ? 'Servicio sin conexión activo' : 'Servicio sin conexión NO activo'));
+  }));
+  var lk = document.querySelector('link[rel=manifest]');
+  tareas.push(fetch(lk ? lk.href : 'manifest.webmanifest', { cache: 'no-cache' }).then(function (r) {
+    if (!r.ok) { L.push(diagLinea(false, 'manifest.webmanifest no se encuentra (error ' + r.status + ')')); return; }
+    return r.json().then(function (m) {
+      L.push(diagLinea(true, 'manifest.webmanifest correcto (' + (m.display || '?') + ')'));
+      return Promise.all((m.icons || []).filter(function (x, i, a) { return a.findIndex(function (y) { return y.src === x.src; }) === i; }).map(function (ic) {
+        return fetch(new URL(ic.src, r.url).href, { cache: 'no-cache' }).then(function (q) { L.push(diagLinea(q.ok, ic.src + (q.ok ? ' presente' : ' NO se encuentra (error ' + q.status + '); revise el nombre exacto del archivo'))); }).catch(function () { L.push(diagLinea(false, ic.src + ' sin acceso')); });
+      }));
+    }).catch(function () { L.push(diagLinea(false, 'manifest.webmanifest tiene un formato inválido')); });
+  }).catch(function () { L.push(diagLinea(false, 'No se pudo leer manifest.webmanifest')); }));
+  Promise.all(tareas).then(function () {
+    var extra = '<p>Si todo sale en ✔ pero Chrome no ofrece instalar, es porque cree que ya está instalada: desinstálela en Ajustes → Aplicaciones, y también quite el acceso directo que abre Google.</p>';
+    out.innerHTML = '<ul class="vals">' + L.join('') + '</ul>' + extra;
+  });
+}
+function reparar() {
+  if (!confirm('Se quitará el servicio sin conexión y la copia guardada de esta app. Sus encargos NO se borran ni se tocan otros sitios. ¿Continuar?')) return;
+  var p = [];
+  if ('serviceWorker' in navigator) p.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.filter(function (r) { return r.scope.indexOf('/Auditor-a-Nueva/') >= 0 || r.scope === location.origin + location.pathname.replace(/[^\/]*$/, ''); }).map(function (r) { return r.unregister(); })); }));
+  if (window.caches) p.push(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k.indexOf('auditoria-') === 0; }).map(function (k) { return caches.delete(k); })); }));
+  Promise.all(p).then(function () { aviso('Listo. Recargando…'); setTimeout(function () { location.reload(); }, 700); });
+}
+function clickInst(t, a) {
+  if (a === 'diag') { diagnostico(); return true; }
+  if (a === 'reparar') { reparar(); return true; }
+  if (a === 'instalarYa') { if (INST.evento) { INST.evento.prompt(); INST.evento.userChoice.then(function () { INST.evento = null; render(); }); } return true; }
+  return false;
+}
+/* FIN DEL ARCHIVO instalar.js */
+
+</script>
+<script>
 /* vistas2.js - Módulos 4 (diario), 9 (cartas) y 11 (control), validación por módulo y exportación extra */
 'use strict';
 
@@ -2164,7 +2223,7 @@ function hojasExtra(e) {
 'use strict';
 
 var CLAVE = 'auditoria.pa.v1';
-var VERSION_APP = 'B2.1';
+var VERSION_APP = 'B2.2';
 var PASOS = [
   { n: 1, t: 'Encargo' }, { n: 2, t: 'Balanza' }, { n: 3, t: 'Planificación' }, { n: 4, t: 'Diario' }, { n: 5, t: 'Pruebas' }, { n: 6, t: 'Ajustes' },
   { n: 7, t: 'Balanza auditada' }, { n: 8, t: 'Estados' }, { n: 9, t: 'Cartas' }, { n: 10, t: 'Dictamen' }, { n: 11, t: 'Control' }, { n: 12, t: 'Exportar' }
@@ -2309,7 +2368,7 @@ function vInicio() {
   h += '<section class="card"><h2>Respaldo</h2><div class="botones"><button class="btn sec" data-act="respaldo">Descargar respaldo</button><label class="btn sec">Importar respaldo<input type="file" accept=".json,application/json" data-act="subirRespaldo" hidden></label></div>' +
     '<p class="mut">Los datos viven solo en este teléfono. Descargue un respaldo con frecuencia.</p></section>';
   h += cardPin();
-  h += '<section class="card"><h2>Instalar en el celular</h2><p class="mut">En Android (Chrome): menú ⋮ → Instalar aplicación. En iPhone (Safari): Compartir → Añadir a pantalla de inicio. Después de abrirla una vez con internet, funciona sin conexión.</p><p class="mut">Versión ' + VERSION_APP + '</p></section>';
+  h += cardInstalar();
   return h;
 }
 
@@ -2739,7 +2798,7 @@ function onClick(ev) {
   if (!t) return;
   var a = t.dataset.act, e = ESTADO.actual ? emp() : null;
   if (t.tagName === 'INPUT' && t.type === 'file') return;
-  if (clickLock(t, a)) return;
+  if (clickLock(t, a) || clickInst(t, a)) return;
   if (clickExtra(t, a, e)) return;
   if (a === 'inicio') { ESTADO.paso = 0; guardar(); render(); }
   else if (a === 'abrir') { ESTADO.actual = t.dataset.id; ESTADO.paso = 1; guardar(); render(); window.scrollTo(0, 0); }
