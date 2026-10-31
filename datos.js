@@ -429,6 +429,23 @@ var PROGRAMA = {
   }
 };
 
+/* Pruebas de ITBMS: solo se muestran cuando el encargo está marcado como contribuyente del ITBMS */
+PROGRAMA.ITBMS = {
+  ref: 'IT-1',
+  objetivo: 'Comprobar que el negocio, como contribuyente del ITBMS, factura, declara y paga el impuesto correctamente y que el crédito fiscal que usa está respaldado.',
+  aserciones: 'Integridad, exactitud, derechos, corte',
+  procedimientos: [
+    'Confirmar que el negocio está inscrito como contribuyente del ITBMS y que las actividades facturadas son gravadas, exentas o no gravadas según la ley (verificar con la DGI)',
+    'Conciliar las ventas gravadas, exentas y no gravadas de las declaraciones mensuales (Formulario 430) con el mayor de ingresos',
+    'Recalcular el ITBMS facturado con la tasa que corresponda a cada venta (la tasa general es 7 %) y compararlo con el pasivo y con lo declarado',
+    'Verificar el crédito fiscal: facturas de compra a nombre del negocio, con RUC y DV, ITBMS desglosado y relación con la actividad gravada',
+    'Revisar que las declaraciones se presentaron y se pagaron a tiempo, y si hay recargos o saldos pendientes',
+    'Revisar retenciones de ITBMS, si el negocio actúa como agente de retención, y su declaración'
+  ],
+  documentos: ['Declaraciones mensuales del ITBMS (Formulario 430)', 'Recibos de pago de la DGI', 'Libros o reportes de ventas y compras', 'Facturas de compra con ITBMS'],
+  instrucciones: 'Concilie mes a mes. Una diferencia entre el ITBMS declarado y el que resulta de los ingresos del mayor se propone como ajuste o se informa como salvedad según su monto.'
+};
+
 /* Lista de verificación de planificación (módulo 3) */
 var CHECK_PLAN = [
   { id: 'p1', t: 'Aceptación del encargo y evaluación de independencia y ética (NIA 210, Código de Ética)' },
@@ -438,7 +455,8 @@ var CHECK_PLAN = [
   { id: 'p5', t: 'Determinación de la materialidad y su umbral de ejecución (NIA 320)' },
   { id: 'p6', t: 'Procedimientos analíticos preliminares con la balanza (NIA 520)' },
   { id: 'p7', t: 'Estrategia global y programa de auditoría aprobados (NIA 300)' },
-  { id: 'p8', t: 'Identificación de partes relacionadas, en especial el propietario (NIA 550)' }
+  { id: 'p8', t: 'Identificación de partes relacionadas, en especial el propietario (NIA 550)' },
+  { id: 'p9', t: 'Determinación de si el negocio es contribuyente del ITBMS y de sus obligaciones (declaraciones y crédito fiscal)' }
 ];
 
 /* Procedimientos finales (módulo 8) */

@@ -2,10 +2,10 @@
 'use strict';
 
 var CLAVE = 'auditoria.pa.v1';
-var VERSION_APP = 'B1.0';
+var VERSION_APP = 'B2.0';
 var PASOS = [
-  { n: 1, t: 'Encargo' }, { n: 2, t: 'Balanza' }, { n: 3, t: 'Planificación' }, { n: 4, t: 'Pruebas' },
-  { n: 5, t: 'Ajustes' }, { n: 6, t: 'Balanza auditada' }, { n: 7, t: 'Estados' }, { n: 8, t: 'Dictamen' }, { n: 9, t: 'Exportar' }
+  { n: 1, t: 'Encargo' }, { n: 2, t: 'Balanza' }, { n: 3, t: 'Planificación' }, { n: 4, t: 'Diario' }, { n: 5, t: 'Pruebas' }, { n: 6, t: 'Ajustes' },
+  { n: 7, t: 'Balanza auditada' }, { n: 8, t: 'Estados' }, { n: 9, t: 'Cartas' }, { n: 10, t: 'Dictamen' }, { n: 11, t: 'Control' }, { n: 12, t: 'Exportar' }
 ];
 var ESTADO = cargar();
 var UI = { tab: 'bg', modo: 'audit', draft: null, abiertos: {}, todos: false, impOpen: false };
@@ -20,14 +20,14 @@ function cargar() {
   return estadoVacio();
 }
 function guardar() {
-  try { localStorage.setItem(CLAVE, JSON.stringify(ESTADO)); } catch (e) { aviso('No se pudo guardar en este navegador'); }
+  try { localStorage.setItem(CLAVE, JSON.stringify(ESTADO)); return true; } catch (e) { aviso('No se pudo guardar en este navegador (¿sin espacio?)'); return false; }
 }
 function emp() { return ESTADO.empresas[ESTADO.actual]; }
 function nuevoId() { return 'e' + Date.now().toString(36) + Math.floor(Math.random() * 1000).toString(36); }
 function empresaNueva(nombre) {
   return {
     id: nuevoId(), creada: new Date().toISOString(),
-    encargo: { nombre: nombre || '', propietario: '', actividad: '', anio: String(new Date().getFullYear()), fechaIni: '', fechaCierre: '', marco: MARCOS[0], itbms: 'No', ciudad: 'Panamá', fechaCarta: '' },
+    encargo: { nombre: nombre || '', propietario: '', actividad: '', anio: String(new Date().getFullYear()), fechaIni: '', fechaCierre: '', marco: MARCOS[0], itbms: 'No', ciudad: 'Panamá', fechaCarta: '', estado: 'Planificación', honorarios: '', horasPres: '', fechaEntrega: '' },
     plan: { base: 'ingresos', pctMat: '', pctEjec: 75, pctTriv: 5, umbralPct: 20, check: {}, riesgoGlobal: '' },
     cuentas: [], ajustes: [], programa: {}, dictamen: { check: {}, ciudad: 'Panamá', opinion: '' }, notas: {}
   };
@@ -110,14 +110,15 @@ function render() {
     vista.innerHTML = vInicio();
     return;
   }
-  var res = validaciones(e);
+  asegurarEmp(e);
+  var res = valApp(e);
   nav.innerHTML = PASOS.map(function (p) {
-    var st = p.n <= 8 ? estadoModulo(res, p.n) : 'na';
+    var st = p.n <= 11 ? estadoModulo(res, p.n) : 'na';
     return '<button class="paso' + (ESTADO.paso === p.n ? ' act' : '') + '" data-act="paso" data-n="' + p.n + '"><i class="pt ' + st + '"></i>' + p.n + '. ' + p.t + '</button>';
   }).join('');
-  var vistas = { 1: vPaso1, 2: vPaso2, 3: vPaso3, 4: vPaso4, 5: vPaso5, 6: vPaso6, 7: vPaso7, 8: vPaso8, 9: vPaso9 };
+  var vistas = { 1: vPaso1, 2: vPaso2, 3: vPaso3, 4: vDiario, 5: vPaso4, 6: vPaso5, 7: vPaso6, 8: vPaso7, 9: vCartas, 10: vPaso8, 11: vControl, 12: vPaso9 };
   vista.innerHTML = vistas[ESTADO.paso](e, res);
-  pie.innerHTML = '<button class="btn sec" data-act="ant"' + (ESTADO.paso <= 1 ? ' disabled' : '') + '>← Anterior</button><button class="btn" data-act="sig"' + (ESTADO.paso >= 9 ? ' disabled' : '') + '>Siguiente →</button>';
+  pie.innerHTML = '<button class="btn sec" data-act="ant"' + (ESTADO.paso <= 1 ? ' disabled' : '') + '>← Anterior</button><button class="btn" data-act="sig"' + (ESTADO.paso >= 12 ? ' disabled' : '') + '>Siguiente →</button>';
   if (ESTADO.paso === 2) actualizarTotales();
 }
 function refrescar() {
@@ -134,9 +135,9 @@ function vInicio() {
   var h = '<section class="card"><h2>Mis encargos</h2>';
   if (!ids.length) h += '<p class="mut">Todavía no hay encargos. Cree uno nuevo o cargue el ejemplo para ver cómo funciona.</p>';
   ids.forEach(function (id) {
-    var e = ESTADO.empresas[id], res = validaciones(e);
-    var pts = PASOS.slice(0, 8).map(function (p) { return '<i class="pt ' + estadoModulo(res, p.n) + '"></i>'; }).join('');
-    h += '<button class="fila-emp" data-act="abrir" data-id="' + id + '"><b>' + esc(e.encargo.nombre || 'Sin nombre') + '</b><small>Ejercicio ' + esc(e.encargo.anio || '') + ' · ' + e.cuentas.length + ' cuentas</small><span class="pts">' + pts + '</span></button>';
+    var e = ESTADO.empresas[id]; asegurarEmp(e); var res = valApp(e);
+    var pts = PASOS.slice(0, 11).map(function (p) { return '<i class="pt ' + estadoModulo(res, p.n) + '"></i>'; }).join('');
+    h += '<button class="fila-emp" data-act="abrir" data-id="' + id + '"><b>' + esc(e.encargo.nombre || 'Sin nombre') + '</b><small>Ejercicio ' + esc(e.encargo.anio || '') + ' · ' + esc(e.encargo.estado) + ' · ' + e.cuentas.length + ' cuentas · ' + fmt(totalHoras(e)) + (e.encargo.horasPres ? ' de ' + fmt(e.encargo.horasPres) : '') + ' h' + (e.encargo.fechaEntrega ? ' · entrega ' + esc(e.encargo.fechaEntrega) : '') + '</small><span class="pts">' + pts + '</span></button>';
   });
   h += '<div class="botones"><button class="btn" data-act="nueva">+ Nuevo encargo</button><button class="btn sec" data-act="ejemplo">Cargar ejemplo</button></div></section>';
   h += '<section class="card"><h2>Datos del auditor</h2><p class="mut">Se usan en la firma del informe y la certificación.</p>' +
@@ -157,7 +158,11 @@ function vPaso1(e, res) {
     '<div class="dos">' + campo('Ejercicio', 'encargo.anio', c.anio) + campo('Ciudad', 'encargo.ciudad', c.ciudad) + '</div>' +
     '<div class="dos">' + campo('Inicio del período', 'encargo.fechaIni', c.fechaIni, { tipo: 'date' }) + campo('Cierre del período', 'encargo.fechaCierre', c.fechaCierre, { tipo: 'date' }) + '</div>' +
     campo('Marco de información', 'encargo.marco', c.marco, { tipo: 'sel', op: MARCOS, nr: true }) +
-    '<div class="dos">' + campo('Contribuyente del ITBMS', 'encargo.itbms', c.itbms, { tipo: 'sel', op: ['No', 'Sí'], nr: true }) + campo('Fecha carta de compromiso', 'encargo.fechaCarta', c.fechaCarta, { tipo: 'date' }) + '</div>' +
+    campo('Contribuyente del ITBMS (si es Sí, el programa agrega las pruebas IT-1)', 'encargo.itbms', c.itbms, { tipo: 'sel', op: ['No', 'Sí'] }) +
+    '<p class="mut">' + (c.itbms === 'Sí' ? 'Activado: el módulo Pruebas incluye el papel IT-1 de ITBMS y las cartas lo mencionan. ' : 'Hoy el encargo se trata como no contribuyente del ITBMS. ') + 'La página de preguntas frecuentes de la DGI menciona ingresos anuales de más de B/. 36,000 o según la actividad económica para declarar el ITBMS; confirme con la DGI el umbral y si la actividad del cliente es gravada.</p>' +
+    '<h4>Registro del encargo</h4><div class="dos">' + campo('Estado', 'encargo.estado', c.estado || 'Planificación', { tipo: 'sel', op: ['Planificación', 'Ejecución', 'Cierre', 'Informe emitido'], nr: true }) + campo('Fecha de entrega', 'encargo.fechaEntrega', c.fechaEntrega, { tipo: 'date' }) + '</div>' +
+    '<div class="dos">' + campo('Honorarios pactados (B/.)', 'encargo.honorarios', c.honorarios, { tipo: 'n', nr: true }) + campo('Horas presupuestadas', 'encargo.horasPres', c.horasPres, { tipo: 'n', nr: true }) + '</div>' +
+    campo('Fecha carta de compromiso', 'encargo.fechaCarta', c.fechaCarta, { tipo: 'date' }) +
     '<p class="mut">Plantilla anual: la balanza lleva saldo inicial y los 12 meses, sin atarse a un rango de fechas. Si el período es parcial (por ejemplo enero a mayo), deje en cero los meses sin movimiento.</p>' +
     listaVal(res, 1) + '</section>' +
     '<section class="card"><button class="btn peligro" data-act="borrarEmpresa">Eliminar este encargo</button></section>';
@@ -199,7 +204,7 @@ function actualizarTotales() {
   put('tt-ac', s(acum));
   put('tt-pa', s(function (c) { return c.pa; }), true);
   e.cuentas.forEach(function (c, i) { var el = document.getElementById('ac-' + i); if (el) el.textContent = fmt(acum(c)); });
-  var res = validaciones(e), v = document.getElementById('val2');
+  var res = valApp(e), v = document.getElementById('val2');
   if (v) v.outerHTML = listaVal(res, 2);
 }
 
@@ -216,7 +221,9 @@ function vPaso3(e, res) {
     campo('Base de cálculo', 'plan.base', mat.base, { tipo: 'sel', op: [{ id: 'ingresos', nombre: 'Ingresos' }, { id: 'activos', nombre: 'Activos totales' }, { id: 'utilidad', nombre: 'Utilidad antes de impuesto' }] }) +
     '<div class="tres">' + campo('% materialidad', 'plan.pctMat', mat.pctMat, { tipo: 'n', nr: false }) + campo('% ejecución', 'plan.pctEjec', mat.pctEjec, { tipo: 'n' }) + campo('% trivial', 'plan.pctTriv', mat.pctTriv, { tipo: 'n' }) + '</div>' +
     '<table class="kv"><tr><td>Base (' + esc(mat.base) + ')</td><td class="num">' + fmt(mat.valorBase) + '</td></tr><tr class="gran"><td>Materialidad global</td><td class="num">' + fmt(mat.mat) + '</td></tr><tr><td>Materialidad de ejecución</td><td class="num">' + fmt(mat.ejec) + '</td></tr><tr><td>Umbral claramente trivial</td><td class="num">' + fmt(mat.triv) + '</td></tr></table>' +
-    '<p class="mut">Referencia con porcentajes usuales: 1 % de ingresos = ' + fmt(mat.ref.ingresos) + '; 2 % de activos = ' + fmt(mat.ref.activos) + '; 5 % de la utilidad antes de impuesto = ' + fmt(mat.ref.utilidad) + '. Son puntos de partida; el criterio final es del auditor.</p></section>';
+    '<p class="mut">Referencia con porcentajes usuales: 1 % de ingresos = ' + fmt(mat.ref.ingresos) + '; 2 % de activos = ' + fmt(mat.ref.activos) + '; 5 % de la utilidad antes de impuesto = ' + fmt(mat.ref.utilidad) + '.</p>' +
+    '<p class="mut">Verificación: la NIA 320 no fija porcentajes. Su material de aplicación (párrafos A3 y A7) dice que se aplica un porcentaje a una base elegida como punto de partida, que elegirlo exige juicio profesional, y da como ejemplos 5 % de la utilidad antes de impuesto para una entidad con fines de lucro y 1 % de los ingresos o gastos totales para una sin fines de lucro, aclarando que pueden usarse porcentajes mayores o menores. El 2 % de activos es una práctica común, no un texto de la norma. Para un negocio de servicios con fines de lucro, la utilidad antes de impuesto suele ser la base más natural; si es muy pequeña o variable, use ingresos con un porcentaje menor.</p>' +
+    campo('Justificación de la base y el porcentaje elegidos', 'plan.justMat', e.plan.justMat, { tipo: 'area', filas: 3 }) + '</section>';
   /* Horizontal y vertical */
   var cp = comparativo(e.cuentas, e.ajustes, 'prelim', { umbralPct: e.plan.umbralPct, umbralMonto: mat.triv });
   h += '<section class="card"><h3>Análisis horizontal y vertical</h3>' + campo('Marcar variaciones desde (%)', 'plan.umbralPct', e.plan.umbralPct, { tipo: 'n' });
@@ -243,7 +250,7 @@ function vPaso3(e, res) {
   /* ISR esperado */
   var isr = isrPN(est.n.uai);
   h += '<section class="card"><h3>Impuesto sobre la renta esperado (persona natural)</h3><table class="kv"><tr><td>Utilidad antes de impuesto (libros)</td><td class="num">' + fmt(est.n.uai) + '</td></tr><tr><td>ISR según tabla (11,000 exento; 15 % hasta 50,000; 5,850 + 25 % sobre el exceso)</td><td class="num">' + fmt(isr) + '</td></tr><tr><td>ISR registrado en libros</td><td class="num">' + fmt(est.n.gisr) + '</td></tr><tr class="gran"><td>Diferencia</td><td class="num">' + fmt(isr - est.n.gisr) + '</td></tr></table>' +
-    '<p class="mut">Es un cálculo de prueba sobre la utilidad contable. La renta gravable real depende de ingresos exentos, gastos no deducibles y otras partidas de la declaración.</p></section>';
+    '<p class="mut">Es un cálculo de prueba sobre la utilidad contable. La renta gravable real depende de ingresos exentos, gastos no deducibles y otras partidas de la declaración. La tabla coincide con la publicada por la DGI para personas naturales (consulta del 31/10/2026).</p></section>';
   /* Riesgo por rubro */
   var rs = rubrosConSaldo(e);
   h += '<section class="card"><h3>Riesgo por rubro (NIA 315)</h3><div class="tabla-scroll"><table class="grid an"><thead><tr><th>Rubro</th><th>Saldo en libros</th><th>Riesgo</th></tr></thead><tbody>';
@@ -263,9 +270,10 @@ function vPaso3(e, res) {
 /* ---------- Paso 4: Programa de pruebas ---------- */
 function vPaso4(e, res) {
   var pre = porRubro(e.cuentas, {}, 'prelim');
-  var rs = UI.todos ? RUBROS : rubrosConSaldo(e);
-  var h = '<section class="card"><h2>4. Programa de pruebas por cuenta</h2><p class="mut">Cada rubro con saldo trae objetivo, procedimientos, documentos e instrucciones. Marque lo ejecutado, anote el hallazgo y concluya. Si una cuenta tiene salvedad, concluya "Con salvedad" y descríbala.</p>' +
-    '<label class="chk"><input type="checkbox" data-act="todos"' + (UI.todos ? ' checked' : '') + '><span>Mostrar también los rubros sin saldo</span></label>' + listaVal(res, 4) + '</section>';
+  var rs = (UI.todos ? RUBROS : rubrosConSaldo(e)).slice();
+  if (e.encargo.itbms === 'Sí') { rs.unshift({ id: 'ITBMS', nombre: 'ITBMS (contribuyente)', sec: 'IMP' }); pre.cierre.ITBMS = r2((pre.cierre.IMPA || 0) + (pre.cierre.IMPP || 0)); }
+  var h = '<section class="card"><h2>5. Programa de pruebas por cuenta</h2><p class="mut">Cada rubro con saldo trae objetivo, procedimientos, documentos e instrucciones. Marque lo ejecutado, anote el hallazgo y concluya. Si una cuenta tiene salvedad, concluya "Con salvedad" y descríbala.</p>' +
+    '<label class="chk"><input type="checkbox" data-act="todos"' + (UI.todos ? ' checked' : '') + '><span>Mostrar también los rubros sin saldo</span></label>' + listaVal(res, 5) + '</section>';
   rs.forEach(function (r) {
     var base = PROGRAMA[r.id], p = e.programa[r.id] || {}, pg = progresoRubro(e, r.id), conc = conclusionSugerida(e, r.id);
     var abierto = UI.abiertos[r.id] ? ' open' : '';
@@ -284,7 +292,7 @@ function vPaso4(e, res) {
     h += '<h4>Instrucciones</h4><p>' + esc(base.instrucciones) + '</p>';
     var sp = p.saldoProbado, dif = (sp === undefined || sp === '' || sp === null) ? null : r2(sp - pre.cierre[r.id]);
     h += '<h4>Resultado de la prueba</h4>' + campo('Saldo según la prueba (confirmado o recalculado)', 'programa.' + r.id + '.saldoProbado', p.saldoProbado, { tipo: 'n' });
-    if (dif !== null) h += '<p class="' + (Math.abs(dif) >= 0.005 ? 'mal' : 'okt') + '">Diferencia contra libros: B/. ' + fmt(dif) + '</p><button class="btn sec" data-act="propAjuste" data-r="' + r.id + '" data-v="' + dif + '">Proponer ajuste</button>';
+    if (dif !== null) h += '<p class="' + (Math.abs(dif) >= 0.005 ? 'mal' : 'okt') + '">Diferencia contra libros: B/. ' + fmt(dif) + '</p>' + (r.id === 'ITBMS' ? '' : '<button class="btn sec" data-act="propAjuste" data-r="' + r.id + '" data-v="' + dif + '">Proponer ajuste</button>');
     h += campo('Hallazgo', 'programa.' + r.id + '.hallazgo', p.hallazgo, { tipo: 'area', filas: 3 }) +
       campo('Conclusión', 'programa.' + r.id + '.conclusion', p.conclusion || '', { tipo: 'sel', op: [{ id: '', nombre: 'Automática (' + conc + ')' }].concat(CONCLUSIONES.map(function (x) { return { id: x, nombre: x }; })) }) +
       '<p class="mut">Avance: ' + pg.proc + ' de ' + pg.total + ' procedimientos y ' + pg.docs + ' de ' + pg.totalDocs + ' documentos.</p></div></details>';
@@ -297,7 +305,7 @@ function vPaso5(e, res) {
   if (UI.draft) return vEditorAjuste(e);
   var mat = materialidad(e, estados(e.cuentas, e.ajustes, 'prelim'));
   var dn = diferenciasNoCorregidas(e, mat);
-  var h = '<section class="card"><h2>5. Ajustes del auditor y salvedades</h2><p class="mut">Cada ajuste es un asiento cuadrado. Solo los <b>Aceptados</b> entran en la balanza auditada. Los <b>No aceptados</b> quedan como diferencias no corregidas y pueden originar una salvedad.</p><div class="botones"><button class="btn" data-act="nuevoAjuste">+ Nuevo ajuste</button></div>' + listaVal(res, 5) + '</section>';
+  var h = '<section class="card"><h2>6. Ajustes del auditor y salvedades</h2><p class="mut">Cada ajuste es un asiento cuadrado. Solo los <b>Aceptados</b> entran en la balanza auditada. Los <b>No aceptados</b> quedan como diferencias no corregidas y pueden originar una salvedad.</p><div class="botones"><button class="btn" data-act="nuevoAjuste">+ Nuevo ajuste</button></div>' + listaVal(res, 6) + '</section>';
   if (!e.ajustes.length) h += '<section class="card"><p class="mut">Todavía no hay ajustes.</p></section>';
   e.ajustes.forEach(function (a) {
     var q = ajusteCuadrado(a);
@@ -335,7 +343,7 @@ function vEditorAjuste(e) {
 /* ---------- Paso 6: Balanza auditada ---------- */
 function vPaso6(e, res) {
   var mapa = ajustesAplicados(e.ajustes);
-  var h = '<section class="card"><h2>6. Balanza auditada</h2><p class="mut">Saldo en libros más los ajustes aceptados.</p>' + listaVal(res, 6) + '</section>';
+  var h = '<section class="card"><h2>7. Balanza auditada</h2><p class="mut">Saldo en libros más los ajustes aceptados.</p>' + listaVal(res, 7) + '</section>';
   if (!e.cuentas.length) return h;
   var t1 = 0, t2 = 0, t3 = 0;
   h += '<section class="card sin-pad"><div class="tabla-scroll"><table class="grid an"><thead><tr><th>Código</th><th>Cuenta</th><th>Rubro</th><th>Libros</th><th>Ajustes</th><th>Auditado</th></tr></thead><tbody>';
@@ -376,9 +384,9 @@ function notasAuto(e, est) {
 }
 function vPaso7(e, res) {
   var modo = UI.modo, est = estados(e.cuentas, e.ajustes, modo);
-  var h = '<section class="card"><h2>7. Estados financieros' + (modo === 'prelim' ? ' preliminares' : ' auditados') + '</h2>' +
+  var h = '<section class="card"><h2>8. Estados financieros' + (modo === 'prelim' ? ' preliminares' : ' auditados') + '</h2>' +
     '<div class="seg"><button class="' + (modo === 'prelim' ? 'act' : '') + '" data-act="modoEst" data-modo="prelim">No auditados</button><button class="' + (modo === 'audit' ? 'act' : '') + '" data-act="modoEst" data-modo="audit">Auditados</button></div>' +
-    '<div class="seg pestanas">' + [['bg', 'Balance'], ['er', 'Resultados'], ['ecp', 'Patrimonio'], ['fe', 'Flujo'], ['nt', 'Notas']].map(function (t) { return '<button class="' + (UI.tab === t[0] ? 'act' : '') + '" data-act="tab" data-t="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</div>' + listaVal(res, 7) + '</section>';
+    '<div class="seg pestanas">' + [['bg', 'Balance'], ['er', 'Resultados'], ['ecp', 'Patrimonio'], ['fe', 'Flujo'], ['nt', 'Notas']].map(function (t) { return '<button class="' + (UI.tab === t[0] ? 'act' : '') + '" data-act="tab" data-t="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</div>' + listaVal(res, 8) + '</section>';
   h += '<section class="card estado">';
   if (UI.tab === 'bg') h += encabezadoEstado('Balance general') + tablaEstado(est.bg);
   else if (UI.tab === 'er') h += encabezadoEstado('Estado de resultados') + tablaEstado(est.er);
@@ -400,7 +408,7 @@ function vPaso8(e, res) {
   var op = opinionSugerida(e), est = op.est, mapa = ajustesAplicados(e.ajustes);
   var pre = porRubro(e.cuentas, {}, 'prelim'), aud = porRubro(e.cuentas, mapa, 'audit');
   var d = e.dictamen;
-  var h = '<section class="card"><h2>8. Cierre y dictamen</h2><p class="mut">Último paso: dictamen por cuenta, procedimientos finales, opinión, informe y certificación.</p>' + listaVal(res, 8) + '</section>';
+  var h = '<section class="card"><h2>10. Cierre y dictamen</h2><p class="mut">Dictamen por cuenta, procedimientos finales, opinión, informe y certificación.</p>' + listaVal(res, 10) + '</section>';
   /* Dictamen por cuenta */
   h += '<section class="card"><h3>Dictamen por cuenta</h3>';
   rubrosConSaldo(e).forEach(function (r) {
@@ -430,10 +438,10 @@ function vPaso8(e, res) {
 
 /* ---------- Paso 9: Exportar y respaldo ---------- */
 function vPaso9(e) {
-  return '<section class="card"><h2>9. Exportar y respaldo</h2><p class="mut">Los libros se generan en el teléfono. Los totales de las balanzas llevan fórmulas de Excel.</p>' +
+  return '<section class="card"><h2>12. Exportar y respaldo</h2><p class="mut">Los libros se generan en el teléfono. Los totales de las balanzas llevan fórmulas de Excel.</p>' +
     '<div class="botones col"><button class="btn" data-act="xlsx" data-m="todo">Libro de auditoría completo (Excel)</button><button class="btn sec" data-act="xlsx" data-m="prelim">Solo fase 1: estados no auditados y análisis</button><button class="btn sec" data-act="imprimir">Imprimir o guardar PDF de la pantalla actual</button></div></section>' +
     '<section class="card"><h3>Respaldo de datos</h3><div class="botones col"><button class="btn sec" data-act="respaldo">Descargar respaldo de todos los encargos</button><label class="btn sec">Importar respaldo<input type="file" accept=".json,application/json" data-act="subirRespaldo" hidden></label></div></section>' +
-    '<section class="card"><h3>Próximos bloques</h3><ul class="vals"><li>Bloque 2: analítica de datos del diario (asientos fuera de horario, cierre, facturas duplicadas, montos redondeados).</li><li>Bloque 3: informe ejecutivo, matriz de riesgos, guía de muestras y control interno.</li><li>Bloque 4: conexión con la app contable y respaldos.</li></ul><p class="mut">Versión ' + VERSION_APP + '</p></section>';
+    '<section class="card"><h3>Próximos bloques</h3><ul class="vals"><li>Bloque 3: informe ejecutivo, matriz de riesgos, guía de muestras y control interno.</li><li>Bloque 4: conexión de solo lectura con la app contable y respaldos.</li></ul><p class="mut">Versión ' + VERSION_APP + '</p></section>';
 }
 
 /* ---------- Exportación a Excel ---------- */
@@ -489,9 +497,9 @@ function hojaTB(e, titulo, modo) {
 function libroExcel(e, modo) {
   var pre = estados(e.cuentas, e.ajustes, 'prelim'), aud = estados(e.cuentas, e.ajustes, 'audit');
   var mat = materialidad(e, pre), c = e.encargo, hojas = [];
-  var res = validaciones(e);
+  var res = valApp(e);
   var por = [[{ v: 'Auditoría externa', s: 't' }], [], ['Cliente', c.nombre], ['Propietario', c.propietario], ['Actividad', c.actividad], ['Ejercicio', c.anio], ['Cierre', fechaLarga(c.fechaCierre)], ['Marco', c.marco], ['Contribuyente ITBMS', c.itbms], ['Auditor', ESTADO.auditor.nombre], ['Idoneidad CPA', ESTADO.auditor.idoneidad], [], [{ v: 'Materialidad global', s: 'b' }, { v: mat.mat, s: 'n' }], ['Materialidad de ejecución', { v: mat.ejec, s: 'n' }], ['Umbral trivial', { v: mat.triv, s: 'n' }], [], [{ v: 'Estado de los módulos', s: 'b' }]];
-  PASOS.slice(0, 8).forEach(function (p) { var l = res[p.n] || []; por.push([p.n + '. ' + p.t, l.filter(function (x) { return x.ok; }).length + ' de ' + l.length + ' controles cumplidos']); });
+  PASOS.slice(0, 11).forEach(function (p) { var l = res[p.n] || []; por.push([p.n + '. ' + p.t, l.filter(function (x) { return x.ok; }).length + ' de ' + l.length + ' controles cumplidos']); });
   hojas.push({ nombre: 'Portada', anchos: [30, 50], filas: por });
   hojas.push(hojaTB(e, 'Balanza de comprobación preliminar', 'prelim'));
   hojas.push(hojaEst(e, 'BG-NoAuditado', 'Balance general (no auditado)', pre.bg));
@@ -542,6 +550,7 @@ function libroExcel(e, modo) {
     inf.push([{ v: 'Certificación', s: 'b' }]); inf.push([{ v: textoCertificacion(e), s: 'w' }]); inf.push([]);
     inf.push([{ v: 'Interpretación final', s: 'b' }]); inf.push([{ v: interpretacionFinal(e), s: 'w' }]);
     hojas.push({ nombre: 'Informe', anchos: [120], filas: inf });
+    hojasExtra(e).forEach(function (hh) { hojas.push(hh); });
   }
   return hojas;
 }
@@ -565,6 +574,7 @@ function onClick(ev) {
   if (!t) return;
   var a = t.dataset.act, e = ESTADO.actual ? emp() : null;
   if (t.tagName === 'INPUT' && t.type === 'file') return;
+  if (clickExtra(t, a, e)) return;
   if (a === 'inicio') { ESTADO.paso = 0; guardar(); render(); }
   else if (a === 'abrir') { ESTADO.actual = t.dataset.id; ESTADO.paso = 1; guardar(); render(); window.scrollTo(0, 0); }
   else if (a === 'nueva') { var ne = empresaNueva(''); ESTADO.empresas[ne.id] = ne; ESTADO.actual = ne.id; ESTADO.paso = 1; guardar(); render(); }
@@ -574,7 +584,7 @@ function onClick(ev) {
     ex.cuentas = datosEjemplo(); ESTADO.empresas[ex.id] = ex; ESTADO.actual = ex.id; ESTADO.paso = 2; guardar(); render();
   }
   else if (a === 'paso') irPaso(parseInt(t.dataset.n, 10));
-  else if (a === 'sig') irPaso(Math.min(9, ESTADO.paso + 1));
+  else if (a === 'sig') irPaso(Math.min(12, ESTADO.paso + 1));
   else if (a === 'ant') irPaso(Math.max(1, ESTADO.paso - 1));
   else if (a === 'borrarEmpresa') { if (confirm('¿Eliminar este encargo y todos sus datos? Esta acción no se puede deshacer.')) { delete ESTADO.empresas[ESTADO.actual]; ESTADO.actual = null; ESTADO.paso = 0; guardar(); render(); } }
   else if (a === 'addCuenta') { e.cuentas.push({ cod: '', nombre: '', rubro: '', si: 0, m: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], pa: 0 }); guardar(); refrescar(); }
@@ -589,7 +599,7 @@ function onClick(ev) {
     var sin = r.cuentas.filter(function (c) { return !c.rubro; }).length;
     aviso(r.cuentas.length + ' cuentas importadas' + (sin ? '; ' + sin + ' sin rubro, elíjalo en la tabla' : ''));
   }
-  else if (a === 'verEst') { UI.modo = t.dataset.modo; UI.tab = 'bg'; irPaso(7); }
+  else if (a === 'verEst') { UI.modo = t.dataset.modo; UI.tab = 'bg'; irPaso(8); }
   else if (a === 'modoEst') { UI.modo = t.dataset.modo; refrescar(); }
   else if (a === 'tab') { UI.tab = t.dataset.t; refrescar(); }
   else if (a === 'todos') { UI.todos = t.checked; refrescar(); }
@@ -597,7 +607,7 @@ function onClick(ev) {
   else if (a === 'propAjuste') {
     nuevoAjusteDraft(); UI.draft.rubro = t.dataset.r;
     UI.draft.descripcion = 'Diferencia de la prueba de ' + RUBRO_POR_ID[t.dataset.r].nombre.toLowerCase() + ': saldo probado contra libros (B/. ' + fmt(parseFloat(t.dataset.v)) + ').';
-    ESTADO.paso = 5; guardar(); render(); window.scrollTo(0, 0);
+    ESTADO.paso = 6; guardar(); render(); window.scrollTo(0, 0);
   }
   else if (a === 'editarAjuste') { var f = e.ajustes.filter(function (x) { return x.id === t.dataset.id; })[0]; UI.draft = JSON.parse(JSON.stringify(f)); refrescar(); window.scrollTo(0, 0); }
   else if (a === 'addLinea') { UI.draft.lineas.push({ cod: '', debe: 0, haber: 0 }); refrescar(); }
@@ -628,6 +638,7 @@ function onClick(ev) {
 }
 function onChange(ev) {
   var t = ev.target;
+  if (changeExtra(t)) return;
   if (t.dataset.act === 'subirRespaldo') {
     var f = t.files[0]; if (!f) return;
     var rd = new FileReader();
@@ -668,6 +679,7 @@ function onChange(ev) {
 function onToggle(ev) {
   var d = ev.target;
   if (d.tagName === 'DETAILS' && d.dataset.rub) UI.abiertos[d.dataset.rub] = d.open;
+  else if (d.tagName === 'DETAILS' && d.dataset.alerta) UI.abiertos['A' + d.dataset.alerta] = d.open;
 }
 function iniciar() {
   var v = document.getElementById('vista');

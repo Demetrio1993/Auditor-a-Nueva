@@ -85,4 +85,11 @@ details.rub > summary::-webkit-details-marker { display: none; }
   textarea { border: 0; background: transparent; resize: none; overflow: visible; }
   .btn, .botones, .seg, .campo select, .campo input { display: none !important; }
 }
+details.al > summary { grid-template-columns: auto 1fr auto; }
+.nv { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.n-alto { background: #f9d6d3; color: #8a1b14; } .n-medio { background: #fde9c4; color: #7a4d00; } .n-bajo { background: #dbe9fb; color: #17406f; }
+.c-pendiente { background: var(--lin); } .c-sinproblema { background: #d7f0e0; color: #0f5a30; } .c-hallazgo { background: #f9d6d3; color: #8a1b14; }
+.vers { border: 1px solid var(--lin); border-radius: 10px; padding: 10px 12px; margin: 10px 0; } .vers small { display: block; color: var(--mut); margin: 2px 0 4px; }
+.carta textarea { font: 14px/1.5 Georgia, 'Times New Roman', serif; min-height: 300px; }
+@media print { .carta textarea { font-size: 11pt; width: 100%; height: auto; } }
 /* FIN DEL ARCHIVO estilos.css */
