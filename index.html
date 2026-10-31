@@ -1908,7 +1908,7 @@ function bloqueoIniciar() {
 <script>
 /* instalar.js - Botón de instalación, diagnóstico y reparación (solo toca esta app, no otros sitios) */
 var INST = { evento: null, instalada: false };
-window.addEventListener('beforeinstallprompt', function (ev) { ev.preventDefault(); INST.evento = ev; if (typeof render === 'function' && !ESTADO.actual) render(); });
+window.addEventListener('beforeinstallprompt', function (ev) { ev.preventDefault(); INST.evento = ev; if (typeof render === 'function' && (!ESTADO.actual || ESTADO.paso === 0) && !document.getElementById('bloqueo')) { var y = window.scrollY; render(); window.scrollTo(0, y); } });
 window.addEventListener('appinstalled', function () { INST.instalada = true; INST.evento = null; });
 
 function modoApp() { return (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; }
@@ -1945,7 +1945,7 @@ function diagnostico() {
   }).catch(function () { L.push(diagLinea(false, 'No se pudo leer manifest.webmanifest')); }));
   Promise.all(tareas).then(function () {
     var extra = '<p>Si todo sale en ✔ pero Chrome no ofrece instalar, es porque cree que ya está instalada: desinstálela en Ajustes → Aplicaciones, y también quite el acceso directo que abre Google.</p>';
-    out.innerHTML = '<ul class="vals">' + L.join('') + '</ul>' + extra;
+    out.innerHTML = '<ul class="vals">' + L.join('') + '</ul>' + (INST.evento ? '<div class="botones"><button class="btn" data-act="instalarYa">Instalar como programa</button></div>' : extra);
   });
 }
 function reparar() {
@@ -2223,7 +2223,7 @@ function hojasExtra(e) {
 'use strict';
 
 var CLAVE = 'auditoria.pa.v1';
-var VERSION_APP = 'B2.2';
+var VERSION_APP = 'B2.3';
 var PASOS = [
   { n: 1, t: 'Encargo' }, { n: 2, t: 'Balanza' }, { n: 3, t: 'Planificación' }, { n: 4, t: 'Diario' }, { n: 5, t: 'Pruebas' }, { n: 6, t: 'Ajustes' },
   { n: 7, t: 'Balanza auditada' }, { n: 8, t: 'Estados' }, { n: 9, t: 'Cartas' }, { n: 10, t: 'Dictamen' }, { n: 11, t: 'Control' }, { n: 12, t: 'Exportar' }
