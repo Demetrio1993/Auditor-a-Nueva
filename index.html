@@ -3066,7 +3066,7 @@ function cifGitLabProbar() {
         CON.resp = ['Listo: el proyecto "' + (j.path_with_namespace || proy) + '" existe y el token puede escribir en él. Ya puede usar "Subir respaldo cifrado a GitLab".'];
         escribirLS(CLAVE_GL, { proyecto: proy });
       } else {
-        CON.resp = ['El proyecto existe, pero el token no tiene rol Developer o Maintainer en él. Pida al dueño del proyecto que le dé ese rol, o use un token de la cuenta dueña.'];
+        CON.resp = ['No: el proyecto existe, pero el token no tiene rol Developer o Maintainer en él. Revise que el token se creó con la cuenta demetrio1993 (la dueña del proyecto) y que la ruta sea exactamente demetrio1993/respaldos-auditoria.'];
       }
     });
   }).catch(function (er) { CON.resp = ['Error: ' + er.message]; }).then(refrescar);
