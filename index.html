@@ -119,6 +119,8 @@ details.al > summary { grid-template-columns: auto 1fr auto; }
 .txt { white-space: pre-wrap; font-size: 14px; } .soloimp { display: none; white-space: pre-wrap; }
 @media print { .soloimp { display: block; } .parte { break-inside: auto; } .mx { break-inside: avoid; } }
 
+.logo-cab { width: 44px; height: 44px; border-radius: 8px; background: #fff; object-fit: contain; flex: 0 0 auto; }
+
 </style>
 </head>
 <body>
@@ -2906,7 +2908,7 @@ function ghError(st, msg) {
   var m = { 401: 'El token no es válido o venció.', 403: 'El token no tiene permiso o se alcanzó un límite.', 404: 'GitHub no encuentra el repositorio o el token no tiene acceso a él (en repositorios privados GitHub responde así).', 409: 'Conflicto al guardar el archivo; intente de nuevo.', 422: 'GitHub rechazó la ruta o el contenido.' }[st];
   return (m || ('Error ' + st + '.')) + (msg ? ' (' + msg + ')' : '');
 }
-function nombreCif() { var d = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16); return 'Respaldo_Auditoria_' + d + '.enc.json'; }
+function nombreCif() { var d = new Date(Date.now() - 5 * 3600000).toISOString().replace(/[:T]/g, '-').slice(0, 16); return 'Respaldo_Auditoria_' + d + '_PA.enc.json'; }
 
 function clickCon(t, a, e) {
   if (a === 'conLogin') {
@@ -3004,7 +3006,7 @@ function changeCon(t) {
 'use strict';
 
 var CLAVE = 'auditoria.pa.v1';
-var VERSION_APP = 'B4.1';
+var VERSION_APP = 'B4.2';
 var PASOS = [
   { n: 1, t: 'Encargo' }, { n: 2, t: 'Balanza' }, { n: 3, t: 'Planificación' }, { n: 4, t: 'Diario' }, { n: 5, t: 'Pruebas' }, { n: 6, t: 'Ajustes' },
   { n: 7, t: 'Balanza auditada' }, { n: 8, t: 'Estados' }, { n: 9, t: 'Cartas' }, { n: 10, t: 'Dictamen' }, { n: 11, t: 'Informe' }, { n: 12, t: 'Control' }, { n: 13, t: 'Exportar' }
@@ -3107,7 +3109,7 @@ function render() {
   var cab = document.getElementById('cab'), nav = document.getElementById('pasos'), vista = document.getElementById('vista'), pie = document.getElementById('pie');
   var e = ESTADO.actual && emp();
   if (e && ESTADO.paso !== 0) cab.innerHTML = '<button class="ico txt" data-act="inicio">‹ Inicio</button><button class="tit-app tit-btn" data-act="paso" data-n="1" aria-label="Editar datos del encargo"><b>' + esc(e.encargo.nombre || 'Sin nombre (toque para escribirlo)') + '</b><small>Ejercicio ' + esc(e.encargo.anio || '') + ' · toque para editar</small></button>';
-  else cab.innerHTML = '<div class="tit-app"><b>Auditoría</b><small>Panamá · NIA y NIIF</small></div>';
+  else cab.innerHTML = '<img class="logo-cab" src="logo.png" alt="Demetrio Dutari Castro, CPA"><div class="tit-app"><b>Auditoría</b><small>Panamá · NIA y NIIF</small></div>';
   if (!e || ESTADO.paso === 0) {
     nav.innerHTML = ''; pie.innerHTML = '';
     vista.innerHTML = vInicio();
