@@ -121,6 +121,9 @@ details.al > summary { grid-template-columns: auto 1fr auto; }
 
 .logo-cab { width: 44px; height: 44px; border-radius: 8px; background: #fff; object-fit: contain; flex: 0 0 auto; }
 
+.logo-print { display: none; }
+@media print { .logo-print { display: block; width: 110px; height: auto; margin: 0 auto 8px; } }
+
 </style>
 </head>
 <body>
@@ -1979,6 +1982,7 @@ function hoyIso() { var d = new Date(); return d.getFullYear() + '-' + pad2(d.ge
 
 /* Garantiza que un encargo antiguo tenga los campos nuevos */
 function asegurarEmp(e) {
+  if (typeof asegurarGob === 'function') asegurarGob(e);
   if (!e.diario) e.diario = {};
   var D = e.diario;
   if (!D.filas) D.filas = [];
@@ -2007,7 +2011,7 @@ function totalHoras(e) { return r2((e.horas || []).reduce(function (t, h) { retu
 function valApp(e) {
   asegurarEmp(e);
   var v = validaciones(e), n = {};
-  n[1] = v[1]; n[2] = v[2];
+  n[1] = v[1].concat([{ ok: checklistCompleto(e), msg: 'Checklist de aceptación e independencia completo' }]); n[2] = v[2];
   n[3] = v[3].concat([{ ok: !!(e.plan.justMat && String(e.plan.justMat).trim()), msg: 'Justificación de la materialidad escrita' }]);
   var an = e.diario.filas.length ? analizarDiario(e) : null;
   n[4] = [{ ok: e.diario.filas.length > 0 || !!e.diario.noAplica, msg: 'Diario cargado o marcado como no disponible' }];
@@ -2215,6 +2219,7 @@ function hojasExtra(e) {
   an.avisos.forEach(function (x) { al.push([{ v: 'Aviso: ' + x, s: 'w' }]); });
   al.push(H(['Prueba', 'Nivel', 'Alerta', 'Detalle', 'Monto', 'Revisión', 'Nota']));
   an.alertas.forEach(function (a) { var r = revisionDe(e, a.k); al.push([a.p, a.nivel, { v: a.titulo, s: 'w' }, { v: a.det, s: 'w' }, a.monto, r.estado, { v: r.nota, s: 'w' }]); });
+  out.push(hojaBitacora(e));
   out.push({ nombre: 'Diario-Alertas', anchos: [8, 10, 40, 70, 14, 14, 36], filas: al });
   var ct = [[{ v: 'Cartas del encargo', s: 't' }], [{ v: AVISO_PLANTILLA, s: 'w' }], []];
   CARTAS.forEach(function (c) { ct.push([{ v: c.t + ' (' + c.n + ')', s: 'b' }]); textoCarta(e, c.id).split(/\n\n+/).forEach(function (p) { ct.push([{ v: p, s: 'w' }]); }); ct.push([]); });
@@ -2559,7 +2564,7 @@ function cuerpoParte(e, p) {
 }
 function vInforme(e, res) {
   var tab = UI.tabInf || 2;
-  var h = '<section class="card"><h2>11. Informe de auditoría</h2><p class="mut">Informe en 7 partes armado con los datos del encargo. Revise cada parte y márquela. Los textos son un borrador: el criterio profesional es suyo.</p>' + listaVal(res, 11) +
+  var h = '<section class="card"><img class="logo-print" src="logo.png" alt=""><h2>11. Informe de auditoría</h2><p class="mut">Informe en 7 partes armado con los datos del encargo. Revise cada parte y márquela. Los textos son un borrador: el criterio profesional es suyo.</p>' + listaVal(res, 11) +
     '<div class="seg pestanas noprint">' + PARTES_INFORME.map(function (x) { return '<button class="' + (tab === x.n ? 'act' : '') + '" data-act="tabInf" data-t="' + x.n + '">' + x.n + '</button>'; }).join('') + '<button class="' + (tab === 'todo' ? 'act' : '') + '" data-act="tabInf" data-t="todo">Todo</button></div>' +
     '<p class="mut noprint">' + (tab === 'todo' ? 'Informe completo, listo para imprimir o guardar como PDF.' : 'Parte ' + tab + ': ' + PARTES_INFORME[tab - 1].t) + '</p></section>';
   var partes = tab === 'todo' ? PARTES_INFORME : [PARTES_INFORME[tab - 1]];
@@ -2891,6 +2896,9 @@ function pedirClave(doble) {
   return a;
 }
 function mezclarEstado(s) {
+  var vr = verificarRespaldo(s);
+  if (!vr.ok) { aviso(vr.errores[0]); return; }
+  if (!confirm(vr.resumen.join('\n') + '\n\n¿Importar estos encargos?')) return;
   var n = 0;
   Object.keys(s.empresas).forEach(function (id) {
     if (ESTADO.empresas[id] && !confirm('El encargo "' + ((s.empresas[id].encargo || {}).nombre || id) + '" ya existe. ¿Reemplazarlo con el del respaldo?')) return;
@@ -2936,7 +2944,7 @@ function clickCon(t, a, e) {
   }
   if (a === 'cifBajar') {
     var k = pedirClave(true); if (!k) return true;
-    cifrarTexto(respaldoTexto(), k).then(function (j) { descargar(nombreCif(), j, 'application/json'); aviso('Respaldo cifrado descargado'); }).catch(function () { aviso('No se pudo cifrar en este navegador'); });
+    cifrarTexto(respaldoTexto(), k).then(function (j) { descargar(nombreCif(), j, 'application/json'); marcarRespaldo(); aviso('Respaldo cifrado descargado'); }).catch(function () { aviso('No se pudo cifrar en este navegador'); });
     return true;
   }
   if (a === 'cifLimpiar') { CON.resp = []; refrescar(); return true; }
@@ -2968,6 +2976,7 @@ function clickCon(t, a, e) {
       return r.json().catch(function () { return {}; }).then(function (j) {
         if (!r.ok) throw new Error(ghError(r.status, j.message));
         var url = (j.content && j.content.html_url) || '';
+        marcarRespaldo();
         CON.resp = ['Subido y confirmado por GitHub: ' + repo + '/' + ruta + (j.commit && j.commit.sha ? ' (commit ' + String(j.commit.sha).slice(0, 7) + ')' : '') + '.', 'En GitHub abra la carpeta "auditoria" dentro de ' + repo + ' (rama principal). Si no la ve, actualice la página.'];
         if (url) CON.resp.push(url);
       });
@@ -3002,11 +3011,266 @@ function changeCon(t) {
 
 </script>
 <script>
+/* gobierno.js - Checklist de aceptación e independencia, cierre del encargo, bitácora, pruebas de cálculo, verificación de respaldos y manual */
+'use strict';
+
+var CHECK_ACEPTACION = [
+  { id: 'g1', t: 'Independencia: no tengo vínculo de parentesco, financiero ni de dirección con el negocio o con su propietario.' },
+  { id: 'g2', t: 'Otros servicios prestados a este cliente no comprometen mi independencia, según el Código de Ética vigente.' },
+  { id: 'g3', t: 'Integridad del propietario evaluada, sin señales de fraude ni de restricción de acceso a la información (NIA 240).' },
+  { id: 'g4', t: 'Competencia: conozco el marco de información (NIIF para las PYMES y leyes de Panamá) y el sector del negocio.' },
+  { id: 'g5', t: 'Tiempo y recursos suficientes para cumplir el plazo, con horas presupuestadas en el módulo 1.' },
+  { id: 'g6', t: 'Carta de compromiso acordada antes de iniciar el trabajo (NIA 210).' },
+  { id: 'g7', t: 'Conflictos de interés revisados y documentados.' },
+  { id: 'g8', t: 'Información recibida: balanza, libros, soportes y estados bancarios, con la fecha de recepción en la nota.' },
+  { id: 'g9', t: 'Confidencialidad y protección de datos: el expediente se guarda solo en mi equipo y en respaldos cifrados (Ley 81 de 2019).' }
+];
+var PERMITIDO_CERRADO = {
+  paso: 1, sig: 1, ant: 1, inicio: 1, abrir: 1, tab: 1, modoEst: 1, verEst: 1, todos: 1, imprimir: 1, xlsx: 1, respaldo: 1, tabInf: 1,
+  toggleImp: 1, toggleImpDiario: 1, diag: 1, reparar: 1, instalarYa: 1, pinBloquear: 1, pinOlvido: 1, pinCambiar: 1, pinQuitar: 1, pinEntrar: 1,
+  cerrarEncargo: 1, reabrirEncargo: 1, probarCalc: 1, manual: 1, cifBajar: 1, cifGitHub: 1, cifProbar: 1, cifLimpiar: 1, conLogin: 1, conEmpresas: 1, conSalir: 1,
+  nueva: 1, ejemplo: 1, gobCheck: 1, bitacoraVer: 1, cerrarManual: 1
+};
+var BITACORA_MAX = 500;
+
+function asegurarGob(e) {
+  if (!e.gob) e.gob = {};
+  var g = e.gob;
+  if (!g.checklist) g.checklist = {};
+  if (!g.bitacora) g.bitacora = [];
+  if (!g.reaperturas) g.reaperturas = [];
+  if (g.cerrado === undefined) g.cerrado = null;
+}
+function cerrado(e) { return !!(e && e.gob && e.gob.cerrado); }
+function autorNombre() { return (ESTADO.auditor && ESTADO.auditor.nombre) || 'Auditor'; }
+
+/* ---------- Bitácora ---------- */
+function bitacoraAdd(e, texto) {
+  asegurarGob(e);
+  e.gob.bitacora.push({ f: new Date().toISOString(), u: autorNombre(), t: String(texto).slice(0, 300) });
+  if (e.gob.bitacora.length > BITACORA_MAX) e.gob.bitacora = e.gob.bitacora.slice(-BITACORA_MAX);
+}
+function valorTexto(v) { if (v === undefined || v === null || v === '') return '(vacío)'; if (typeof v === 'object') return JSON.stringify(v).slice(0, 80); return String(v).slice(0, 80); }
+function htmlBitacora(e) {
+  asegurarGob(e);
+  var b = e.gob.bitacora.slice(-100).reverse();
+  if (!b.length) return '<p class="mut">Todavía no hay cambios registrados.</p>';
+  return '<div class="tabla-scroll"><table class="est"><tr class="tit"><td>Fecha y hora (Panamá)</td><td>Quién</td><td>Cambio</td></tr>' + b.map(function (x) {
+    return '<tr><td>' + esc(fechaHoraPA(x.f)) + '</td><td>' + esc(x.u) + '</td><td>' + esc(x.t) + '</td></tr>';
+  }).join('') + '</table></div><p class="mut">Se muestran los últimos 100 cambios. El Excel completo incluye hasta ' + BITACORA_MAX + '.</p>';
+}
+function fechaHoraPA(iso) {
+  var ms = Date.parse(iso); if (isNaN(ms)) return '';
+  return new Date(ms - 5 * 3600000).toISOString().replace('T', ' ').slice(0, 16);
+}
+function hojaBitacora(e) {
+  asegurarGob(e);
+  var H = function (a) { return a.map(function (x) { return { v: x, s: 'h' }; }); };
+  var f = [[{ v: 'Bitácora del encargo', s: 't' }], [], H(['Fecha y hora (Panamá)', 'Quién', 'Cambio'])];
+  e.gob.bitacora.forEach(function (x) { f.push([fechaHoraPA(x.f), x.u, { v: x.t, s: 'w' }]); });
+  return { nombre: 'Bitacora', anchos: [22, 24, 110], filas: f };
+}
+
+/* ---------- Checklist de aceptación ---------- */
+function checklistCompleto(e) {
+  asegurarGob(e);
+  return CHECK_ACEPTACION.every(function (c) { var x = e.gob.checklist[c.id]; return !!(x && x.ok); });
+}
+function vChecklist(e) {
+  asegurarGob(e);
+  var bloq = cerrado(e) ? ' disabled' : '';
+  var h = '<section class="card"><h2>Checklist de aceptación e independencia</h2><p class="mut">Marque cada punto antes de iniciar el trabajo (NIA 210 y 220, Código de Ética). Sin este checklist completo, el encargo no pasa el control del módulo 1 y no se puede cerrar.</p>';
+  CHECK_ACEPTACION.forEach(function (c) {
+    var x = e.gob.checklist[c.id] || {};
+    h += '<label class="chk"><input type="checkbox" data-k="gob.checklist.' + c.id + '.ok"' + (x.ok ? ' checked' : '') + bloq + '><span>' + esc(c.t) + '</span></label>' +
+      '<label class="campo"><span>Nota (opcional)</span><input data-k="gob.checklist.' + c.id + '.nota" data-nr="1" value="' + esc(x.nota || '') + '"' + bloq + '></label>';
+  });
+  var hechos = CHECK_ACEPTACION.filter(function (c) { return e.gob.checklist[c.id] && e.gob.checklist[c.id].ok; }).length;
+  return h + '<p class="' + (hechos === CHECK_ACEPTACION.length ? 'okt' : 'mal') + '">' + hechos + ' de ' + CHECK_ACEPTACION.length + ' puntos marcados.</p></section>';
+}
+
+/* ---------- Cierre del encargo ---------- */
+function cierreRequisitos(e) {
+  asegurarGob(e);
+  var r = [];
+  r.push({ ok: checklistCompleto(e), msg: 'Checklist de aceptación e independencia completo (módulo 1)' });
+  var ops = ['favorable', 'salvedad', 'desfavorable', 'abstencion'];
+  r.push({ ok: ops.indexOf(e.dictamen && e.dictamen.opinion) >= 0, msg: 'Tipo de opinión elegido (módulo 10)' });
+  var inf = e.informe || {}, rv = inf.rev || {};
+  [2, 3, 4, 5, 7].forEach(function (n) { r.push({ ok: !!rv['p' + n], msg: 'Parte ' + n + ' del informe revisada (módulo 11)' }); });
+  var pend = (e.ajustes || []).filter(function (a) { return a.estado === 'Propuesto'; }).length;
+  r.push({ ok: pend === 0, msg: 'Ajustes propuestos con decisión del propietario' + (pend ? ' (' + pend + ' pendientes)' : '') });
+  var v = valApp(e);
+  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].forEach(function (n) {
+    (v[n] || []).forEach(function (x) { if (!x.ok) r.push({ ok: false, msg: 'Módulo ' + n + ': ' + x.msg }); });
+  });
+  return r;
+}
+function vCierre(e) {
+  asegurarGob(e);
+  var h = '<section class="card"><h3>Cierre del encargo</h3>';
+  if (cerrado(e)) {
+    h += '<p class="okt">Encargo cerrado el ' + esc(fechaHoraPA(e.gob.cerrado.f)) + ' por ' + esc(e.gob.cerrado.u) + '. Los datos quedan en solo lectura.</p>' +
+      '<p class="mut">Para corregir algo, reábralo indicando el motivo. La reapertura queda registrada en la bitácora.</p>' +
+      '<div class="botones"><button class="btn sec" data-act="reabrirEncargo">Reabrir encargo</button></div>';
+  } else {
+    var req = cierreRequisitos(e), falta = req.filter(function (x) { return !x.ok; });
+    h += '<p class="mut">Al cerrar, el encargo pasa a solo lectura. Solo se pueden consultar, imprimir y exportar.</p>';
+    h += '<ul class="vals">' + req.map(function (x) { return '<li class="' + (x.ok ? 'ok' : 'no') + '">' + (x.ok ? '✔ ' : '✘ ') + esc(x.msg) + '</li>'; }).join('') + '</ul>';
+    h += falta.length ? '<p class="mal">Faltan ' + falta.length + ' requisito(s) para cerrar.</p>' :
+      '<div class="botones"><button class="btn" data-act="cerrarEncargo">Cerrar encargo</button></div>';
+  }
+  if (e.gob.reaperturas.length) h += '<p class="mut">Reaperturas: ' + e.gob.reaperturas.map(function (r) { return esc(fechaHoraPA(r.f)) + ' (' + esc(r.u) + ': ' + esc(r.motivo) + ')'; }).join('; ') + '.</p>';
+  return h + '</section>';
+}
+function bannerCerrado(e) {
+  return '<div class="banner-cerrado noprint">Encargo cerrado: solo lectura. Para cambiar datos, reábralo en el módulo 12.</div>';
+}
+
+/* ---------- Pruebas automáticas de cálculo ---------- */
+function pruebasCalculo() {
+  var out = [];
+  function t(nombre, fn) { var ok = false, det = ''; try { var r = fn(); ok = r === true; if (!ok) det = 'obtuvo ' + valorTexto(r); } catch (er) { det = 'error: ' + er.message; } out.push({ ok: ok, msg: nombre + (ok ? '' : ' (' + det + ')') }); }
+  t('ISR persona natural: B/. 11,000 no paga', function () { return isrPN(11000) === 0; });
+  t('ISR persona natural: B/. 12,000 paga B/. 150', function () { return isrPN(12000) === 150; });
+  t('ISR persona natural: B/. 50,000 paga B/. 5,850', function () { return isrPN(50000) === 5850; });
+  t('ISR persona natural: B/. 60,000 paga B/. 8,350', function () { return isrPN(60000) === 8350; });
+  t('Materialidad: 1 % de ingresos de B/. 40,400 es B/. 404', function () {
+    var m = materialidad({ plan: { base: 'ingresos' } }, { n: { ing: 40400, activos: 44000, uai: 23900 } }); return Math.abs(m.mat - 404) < 0.005;
+  });
+  t('Materialidad: ejecución 75 % y trivial 5 % de la materialidad', function () {
+    var m = materialidad({ plan: { base: 'ingresos' } }, { n: { ing: 40400, activos: 44000, uai: 23900 } }); return Math.abs(m.ejec - 303) < 0.005 && Math.abs(m.triv - 20.2) < 0.005;
+  });
+  t('Catálogo: 27 rubros de balanza', function () { return RUBROS.length === 27; });
+  t('Feriados 2026 cargados (12)', function () { return FERIADOS_2026.length === 12; });
+  t('Ajustes: un asiento que no cuadra se rechaza', function () { return ajusteCuadrado({ lineas: [{ cod: '1', debe: 100, haber: 0 }, { cod: '2', debe: 0, haber: 90 }] }).ok === false; });
+  t('Ajustes: un asiento balanceado se acepta', function () { return ajusteCuadrado({ lineas: [{ cod: '1', debe: 100, haber: 0 }, { cod: '2', debe: 0, haber: 100 }] }).ok === true; });
+  t('Balance de ejemplo cuadra (activos = pasivos + patrimonio)', function () {
+    var ej = { cuentas: datosEjemplo(), ajustes: [] }, est = estados(ej.cuentas, [], 'audit');
+    return Math.abs(est.n.activos - (est.n.pasivos + est.n.patrimonio)) < 0.01;
+  });
+  t('Balance de ejemplo: flujo de efectivo concilia con el efectivo', function () {
+    var ej = datosEjemplo(), est = estados(ej, [], 'audit');
+    return est.fe && est.fe.length > 0;
+  });
+  t('Excel: el archivo generado tiene formato ZIP (PK)', function () { var b = xlsxCrear([{ nombre: 'T', anchos: [10], filas: [['x']] }]); return b[0] === 0x50 && b[1] === 0x4B; });
+  return out;
+}
+function vPruebas(res) {
+  var r = res || pruebasCalculo(), bien = r.filter(function (x) { return x.ok; }).length;
+  return '<section class="card"><h3>Pruebas automáticas de cálculo</h3><p class="mut">Comprueban que los cálculos del programa dan los resultados esperados (ISR, materialidad, balance, Excel). Si una prueba falla después de un cambio, no use el programa para un cliente hasta corregirlo.</p>' +
+    '<p class="' + (bien === r.length ? 'okt' : 'mal') + '">' + bien + ' de ' + r.length + ' pruebas correctas.</p>' +
+    '<ul class="vals">' + r.map(function (x) { return '<li class="' + (x.ok ? 'ok' : 'no') + '">' + (x.ok ? '✔ ' : '✘ ') + esc(x.msg) + '</li>'; }).join('') + '</ul>' +
+    '<div class="botones"><button class="btn sec" data-act="probarCalc">Volver a ejecutar</button></div></section>';
+}
+
+/* ---------- Verificación de respaldos antes de importar ---------- */
+function verificarRespaldo(s) {
+  var err = [], res = [];
+  if (!s || typeof s !== 'object' || !s.empresas || typeof s.empresas !== 'object') return { ok: false, errores: ['El archivo no contiene encargos de la app de auditoría.'], resumen: [] };
+  var ids = Object.keys(s.empresas), cuentas = 0, asientos = 0;
+  ids.forEach(function (id) {
+    var e = s.empresas[id], nom = (e && e.encargo && e.encargo.nombre) || id;
+    if (!e || !e.encargo) { err.push('Un encargo no tiene datos generales.'); return; }
+    if (!Array.isArray(e.cuentas)) { err.push('"' + nom + '": la balanza no es una lista.'); return; }
+    var sumaSi = 0;
+    e.cuentas.forEach(function (c) {
+      cuentas++;
+      if (typeof c.cod !== 'string' || !isFinite(Number(c.si))) err.push('"' + nom + '": una cuenta tiene código o saldo inicial inválido.');
+      if (!Array.isArray(c.m) || c.m.length !== 12) err.push('"' + nom + '": la cuenta ' + (c.cod || '?') + ' no tiene 12 meses.');
+      sumaSi += Number(c.si) || 0;
+    });
+    if (Math.abs(sumaSi) > 0.01 && e.cuentas.length) res.push('Aviso "' + nom + '": los saldos iniciales suman B/. ' + fmt(sumaSi) + ' (deberían sumar cero).');
+    (e.ajustes || []).forEach(function (a) {
+      var d = 0, h = 0; (a.lineas || []).forEach(function (l) { d += Number(l.debe) || 0; h += Number(l.haber) || 0; });
+      if (Math.abs(d - h) > 0.01) err.push('"' + nom + '": el ajuste ' + (a.n || '?') + ' no cuadra.');
+    });
+    asientos += ((e.diario && e.diario.filas) || []).length;
+  });
+  res.unshift(ids.length + ' encargo(s), ' + cuentas + ' cuenta(s) y ' + asientos + ' línea(s) de diario.');
+  if (!err.length) res.push('Estructura verificada: sin errores.');
+  return { ok: err.length === 0, errores: err, resumen: res };
+}
+function marcarRespaldo() { ESTADO.ultimoRespaldo = new Date().toISOString(); guardar(); }
+function cardRespaldoRecordado() {
+  var u = ESTADO.ultimoRespaldo, dias = u ? Math.floor((Date.now() - Date.parse(u)) / 86400000) : null;
+  if (dias !== null && dias < 7) return '';
+  return '<section class="card"><h3>Respaldo recomendado</h3><p class="mut">' + (dias === null ? 'Todavía no ha hecho ningún respaldo en este teléfono.' : 'El último respaldo fue hace ' + dias + ' días.') + ' Haga uno ahora.</p><div class="botones"><button class="btn" data-act="respaldo">Descargar respaldo ahora</button></div></section>';
+}
+
+/* ---------- Manual de uso ---------- */
+var MANUAL = [
+  ['Antes de empezar', 'La app funciona en su teléfono y no necesita internet para trabajar. Los datos se guardan solo en el navegador de este equipo. Haga un respaldo cifrado cada semana, porque si borra los datos del navegador se pierden. Active el PIN en Inicio si otra persona puede usar el teléfono.'],
+  ['Inicio', 'Aquí crea encargos, abre los existentes, carga el ejemplo, guarda respaldos y controla la instalación. El botón "‹ Inicio" de arriba regresa siempre a esta pantalla.'],
+  ['1. Encargo', 'Datos del cliente, período y marco de información. Complete el checklist de aceptación e independencia antes de avanzar: sin él, el encargo no puede cerrarse.'],
+  ['2. Balanza', 'Balanza de comprobación preliminar. Puede pegar desde Excel o traerla de la app contable con "Traer datos" (solo lectura). Convención: débito positivo, crédito negativo.'],
+  ['3. Planificación', 'Materialidad, análisis horizontal y vertical, razones y riesgos. Escriba la justificación de la materialidad; la app le muestra la referencia de la NIA 320.'],
+  ['4. Diario', 'Cargue el libro diario (o tráigalo de la app contable). La app corre diez pruebas de asientos: horario, fines de semana, cierre, duplicados, secuencia de facturas, montos redondos, repetidos, Benford e integridad. Cada alerta es una señal, no una conclusión: márquela como Sin problema o Hallazgo y anote el soporte que revisó.'],
+  ['5. Pruebas', 'Programa de pruebas por rubro, con procedimientos, documentos e instrucciones. Registre el saldo probado; la app calcula la diferencia contra libros.'],
+  ['6. Ajustes', 'Ajustes propuestos por el auditor con sus líneas de debe y haber. Estados: Propuesto, Aceptado o No aceptado. El asiento debe cuadrar para guardarse.'],
+  ['7. Balanza auditada', 'Saldos después de los ajustes aceptados.'],
+  ['8. Estados', 'Balance, resultados, cambios en el patrimonio, flujo indirecto y notas, sin ajustes y con ajustes. Los estados deben cuadrar.'],
+  ['9. Cartas', 'Carta de compromiso (NIA 210), representación (NIA 580) y recomendaciones (NIA 265). Son plantillas: revíselas antes de firmar.'],
+  ['10. Dictamen', 'Dictamen por cuenta, opinión (favorable, con salvedades, desfavorable o abstención) y certificación. La app sugiere una opinión, pero la decisión es suya.'],
+  ['11. Informe', 'Informe en siete partes, con pestañas para revisar cada una y marcarla como revisada. "Todo" arma el informe completo para imprimir o guardar como PDF. El Excel incluye las hojas del informe.'],
+  ['12. Control', 'Cierre del encargo, bitácora de cambios, pruebas automáticas de cálculo y versiones de los papeles. Al cerrar, el encargo queda en solo lectura. Para corregirlo, reábralo con un motivo.'],
+  ['13. Exportar', 'Libro de auditoría en Excel, informes en PDF (con el menú de impresión) y respaldos de todos los encargos.'],
+  ['Respaldos y restauración', 'Descargue un respaldo cifrado con una clave que escribe usted. Sin la clave no se puede abrir. Para restaurar, use "Importar respaldo cifrado": la app revisa la estructura, muestra un resumen y pide confirmación antes de reemplazar encargos.'],
+  ['Traer datos de la app contable', 'Inicie sesión con un usuario de perfil lector. La app solo lee la balanza y el diario; no escribe nada en la contabilidad.']
+];
+function vManual() {
+  return '<section class="card"><h2>Manual de uso</h2><p class="mut">Guía del programa en orden de trabajo. Puede imprimirla o guardarla como PDF con el botón de abajo.</p>' +
+    MANUAL.map(function (m) { return '<details class="rub"><summary><span class="nm">' + esc(m[0]) + '</span></summary><div class="cuerpo"><p>' + esc(m[1]) + '</p></div></details>'; }).join('') +
+    '<div class="botones noprint"><button class="btn" data-act="imprimir">Imprimir o guardar PDF</button><button class="btn sec" data-act="cerrarManual">Volver a Inicio</button></div></section>';
+}
+function cardManualBtn() { return '<section class="card"><h3>Manual de uso</h3><p class="mut">Guía del programa paso a paso, con las reglas del cierre y los respaldos.</p><div class="botones"><button class="btn sec" data-act="manual">Abrir el manual</button></div></section>'; }
+function bitacoraCard(e) { return '<section class="card"><h3>Bitácora de cambios</h3>' + htmlBitacora(e) + '</section>'; }
+
+/* ---------- Eventos ---------- */
+function clickGob(t, a, e) {
+  if (a === 'cerrarEncargo') {
+    if (!e) return true;
+    var falta = cierreRequisitos(e).filter(function (x) { return !x.ok; });
+    if (falta.length) { aviso('Faltan ' + falta.length + ' requisito(s) para cerrar'); refrescar(); return true; }
+    if (!confirm('¿Cerrar el encargo? Quedará en solo lectura hasta que lo reabra.')) return true;
+    asegurarGob(e);
+    e.gob.cerrado = { f: new Date().toISOString(), u: autorNombre() };
+    bitacoraAdd(e, 'Encargo cerrado');
+    guardar(); refrescar(); aviso('Encargo cerrado');
+    return true;
+  }
+  if (a === 'reabrirEncargo') {
+    if (!e) return true;
+    var motivo = prompt('Motivo de la reapertura (obligatorio)');
+    if (!motivo || !String(motivo).trim()) { aviso('Escriba el motivo para reabrir'); return true; }
+    asegurarGob(e);
+    e.gob.reaperturas.push({ f: new Date().toISOString(), u: autorNombre(), motivo: String(motivo).trim() });
+    bitacoraAdd(e, 'Encargo reabierto. Motivo: ' + String(motivo).trim());
+    e.gob.cerrado = null;
+    guardar(); refrescar(); aviso('Encargo reabierto');
+    return true;
+  }
+  if (a === 'probarCalc') { UI.pruebasCalc = pruebasCalculo(); refrescar(); return true; }
+  if (a === 'manual') { UI.verManual = true; refrescar(); window.scrollTo(0, 0); return true; }
+  if (a === 'cerrarManual') { UI.verManual = false; refrescar(); return true; }
+  return false;
+}
+/* Bloqueo de cambios con el encargo cerrado; devuelve true si se bloqueó */
+function bloqueoCerrado(e, a) {
+  if (!cerrado(e)) return false;
+  if (a === undefined) return true;
+  return !PERMITIDO_CERRADO[a];
+}
+function avisoCerrado() { aviso('Encargo cerrado: reábralo en el módulo 12 para cambiarlo'); }
+/* FIN DEL ARCHIVO gobierno.js */
+
+</script>
+<script>
 /* app.js - Interfaz de la app de auditoría (módulos 1 a 9) */
 'use strict';
 
 var CLAVE = 'auditoria.pa.v1';
-var VERSION_APP = 'B4.2';
+var VERSION_APP = 'B5.0';
 var PASOS = [
   { n: 1, t: 'Encargo' }, { n: 2, t: 'Balanza' }, { n: 3, t: 'Planificación' }, { n: 4, t: 'Diario' }, { n: 5, t: 'Pruebas' }, { n: 6, t: 'Ajustes' },
   { n: 7, t: 'Balanza auditada' }, { n: 8, t: 'Estados' }, { n: 9, t: 'Cartas' }, { n: 10, t: 'Dictamen' }, { n: 11, t: 'Informe' }, { n: 12, t: 'Control' }, { n: 13, t: 'Exportar' }
@@ -3092,7 +3356,7 @@ function tablaECP(filas) {
 }
 function encabezadoEstado(titulo) {
   var e = emp().encargo;
-  return '<div class="enc-est"><b>' + esc(e.nombre || 'Nombre del negocio') + '</b><br>' + esc(titulo) + '<br>Al ' + esc(fechaLarga(e.fechaCierre)) + '<br><small>Expresado en balboas (B/.)</small></div>';
+  return '<div class="enc-est"><img class="logo-print" src="logo.png" alt=""><b>' + esc(e.nombre || 'Nombre del negocio') + '</b><br>' + esc(titulo) + '<br>Al ' + esc(fechaLarga(e.fechaCierre)) + '<br><small>Expresado en balboas (B/.)</small></div>';
 }
 var OPT_RUBROS = (function () {
   var h = '<option value="">- elegir -</option>', sec = '';
@@ -3112,7 +3376,7 @@ function render() {
   else cab.innerHTML = '<img class="logo-cab" src="logo.png" alt="Demetrio Dutari Castro, CPA"><div class="tit-app"><b>Auditoría</b><small>Panamá · NIA y NIIF</small></div>';
   if (!e || ESTADO.paso === 0) {
     nav.innerHTML = ''; pie.innerHTML = '';
-    vista.innerHTML = vInicio();
+    vista.innerHTML = UI.verManual ? vManual() : vInicio();
     return;
   }
   asegurarEmp(e);
@@ -3121,8 +3385,8 @@ function render() {
     var st = p.n <= 12 ? estadoModulo(res, p.n) : 'na';
     return '<button class="paso' + (ESTADO.paso === p.n ? ' act' : '') + '" data-act="paso" data-n="' + p.n + '"><i class="pt ' + st + '"></i>' + p.n + '. ' + p.t + '</button>';
   }).join('');
-  var vistas = { 1: vPaso1, 2: function (e, res) { return conVista(e) + vPaso2(e, res); }, 3: vPaso3, 4: vDiario, 5: vPaso4, 6: vPaso5, 7: vPaso6, 8: vPaso7, 9: vCartas, 10: vPaso8, 11: vInforme, 12: vControl, 13: function (e, res) { return vPaso9(e) + cardRespaldoCif(); } };
-  vista.innerHTML = vistas[ESTADO.paso](e, res);
+  var vistas = { 1: function (e, res) { return vPaso1(e, res) + vChecklist(e); }, 2: function (e, res) { return conVista(e) + vPaso2(e, res); }, 3: vPaso3, 4: vDiario, 5: vPaso4, 6: vPaso5, 7: vPaso6, 8: vPaso7, 9: vCartas, 10: vPaso8, 11: vInforme, 12: function (e, res) { return vCierre(e) + vControl(e, res) + vPruebas(UI.pruebasCalc) + bitacoraCard(e); }, 13: function (e, res) { return vPaso9(e) + cardRespaldoCif(); } };
+  vista.innerHTML = (cerrado(e) ? bannerCerrado(e) : '') + vistas[ESTADO.paso](e, res);
   pie.innerHTML = '<button class="btn sec" data-act="ant"' + (ESTADO.paso <= 1 ? ' disabled' : '') + '>← Anterior</button><button class="btn" data-act="sig"' + (ESTADO.paso >= 13 ? ' disabled' : '') + '>Siguiente →</button>';
   if (ESTADO.paso === 2) actualizarTotales();
 }
@@ -3150,6 +3414,7 @@ function vInicio() {
     campo('Nombre completo', 'auditor.nombre', ESTADO.auditor.nombre, { g: 1 }) + campo('N.º de idoneidad CPA', 'auditor.idoneidad', ESTADO.auditor.idoneidad, { g: 1 }) + '</section>';
   h += '<section class="card"><h2>Respaldo</h2><div class="botones"><button class="btn sec" data-act="respaldo">Descargar respaldo</button><label class="btn sec">Importar respaldo<input type="file" accept=".json,application/json" data-act="subirRespaldo" hidden></label></div>' +
     '<p class="mut">Los datos viven solo en este teléfono. Descargue un respaldo con frecuencia.</p></section>';
+  h += cardRespaldoRecordado() + cardManualBtn();
   h += cardPin();
   h += cardRespaldoCif();
   h += cardInstalar();
@@ -3583,11 +3848,13 @@ function onClick(ev) {
   if (!t) return;
   var a = t.dataset.act, e = ESTADO.actual ? emp() : null;
   if (t.tagName === 'INPUT' && t.type === 'file') return;
+  if (e && bloqueoCerrado(e, a)) { avisoCerrado(); refrescar(); return; }
+  if (clickGob(t, a, e)) return;
   if (clickLock(t, a) || clickInst(t, a)) return;
   if (clickCon(t, a, e)) return;
   if (e && clickInforme(t, a, e)) return;
   if (clickExtra(t, a, e)) return;
-  if (a === 'inicio') { ESTADO.paso = 0; guardar(); render(); }
+  if (a === 'inicio') { ESTADO.paso = 0; UI.verManual = false; guardar(); render(); }
   else if (a === 'abrir') { ESTADO.actual = t.dataset.id; ESTADO.paso = 1; guardar(); render(); window.scrollTo(0, 0); }
   else if (a === 'nueva') { var ne = empresaNueva(''); ESTADO.empresas[ne.id] = ne; ESTADO.actual = ne.id; ESTADO.paso = 1; guardar(); render(); }
   else if (a === 'ejemplo') {
@@ -3633,6 +3900,7 @@ function onClick(ev) {
     delete d.nuevo;
     var idx = -1; e.ajustes.forEach(function (x, i) { if (x.id === d.id) idx = i; });
     if (idx >= 0) e.ajustes[idx] = d; else e.ajustes.push(d);
+    bitacoraAdd(e, 'Ajuste ' + d.n + ' guardado (' + (d.estado || 'sin estado') + ')');
     UI.draft = null; guardar(); refrescar(); aviso('Ajuste guardado');
   }
   else if (a === 'delAjuste') { if (confirm('¿Eliminar este ajuste?')) { e.ajustes = e.ajustes.filter(function (x) { return x.id !== UI.draft.id; }); UI.draft = null; guardar(); refrescar(); } }
@@ -3645,11 +3913,15 @@ function onClick(ev) {
     } catch (err) { aviso('No se pudo generar el Excel: ' + err.message); }
   }
   else if (a === 'respaldo') {
+    marcarRespaldo();
     descargar('Respaldo_Auditoria_' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify({ app: 'auditoria-pa', version: 1, exportado: new Date().toISOString(), estado: ESTADO }), 'application/json');
+    refrescar();
   }
 }
 function onChange(ev) {
   var t = ev.target;
+  var eC = ESTADO.actual ? emp() : null, kC = t.dataset.k || '';
+  if (eC && cerrado(eC) && ((kC && !/^informe\./.test(kC)) || t.dataset.d || t.dataset.dl || t.dataset.rev != null || t.dataset.revn != null || t.dataset.act === 'subirDiario' || t.dataset.act === 'impDiario' || t.dataset.con === 'anio' || t.dataset.con === 'fin')) { avisoCerrado(); refrescar(); return; }
   if (changeCon(t)) return;
   if (changeExtra(t)) return;
   if (t.dataset.act === 'subirRespaldo') {
@@ -3659,6 +3931,9 @@ function onChange(ev) {
       try {
         var o = JSON.parse(rd.result), s = o.estado || o;
         if (!s.empresas) throw new Error('formato');
+        var vr = verificarRespaldo(s);
+        if (!vr.ok) { aviso(vr.errores[0]); return; }
+        if (!confirm(vr.resumen.join('\n') + '\n\n¿Importar estos encargos?')) return;
         var n = 0;
         Object.keys(s.empresas).forEach(function (id) {
           if (ESTADO.empresas[id] && !confirm('El encargo "' + (s.empresas[id].encargo.nombre || id) + '" ya existe. ¿Reemplazarlo con el del respaldo?')) return;
@@ -3684,6 +3959,7 @@ function onChange(ev) {
   var v = t.type === 'checkbox' ? t.checked : t.value;
   if (t.dataset.t === 'n') v = (t.value.trim() === '' && /saldoProbado$/.test(t.dataset.k)) ? '' : num(t.value);
   var raiz = t.dataset.r === 'g' ? ESTADO : emp();
+  if (raiz !== ESTADO && raiz && !/^informe\./.test(kC)) { var viejo = getPath(raiz, t.dataset.k); if (valorTexto(viejo) !== valorTexto(v)) bitacoraAdd(raiz, 'Cambio en ' + t.dataset.k + ': ' + valorTexto(viejo) + ' → ' + valorTexto(v)); }
   setPath(raiz, t.dataset.k, v);
   guardar();
   if (t.dataset.cel) actualizarTotales();
