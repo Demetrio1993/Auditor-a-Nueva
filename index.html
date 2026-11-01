@@ -2910,7 +2910,7 @@ function respaldoTexto() { return JSON.stringify({ app: 'auditoria-pa', version:
 function cardRespaldoCif() {
   var c = conCfg();
   return '<section class="card"><h3>Respaldo cifrado</h3><p class="mut">El archivo se cifra con una clave que usted escribe (AES-256). Sin la clave nadie puede leerlo, ni siquiera en un repositorio. Si la olvida, no se puede recuperar.</p>' +
-    '<div class="botones col"><button class="btn sec" data-act="cifBajar">Descargar respaldo cifrado</button><button class="btn sec" data-act="cifGitHub">Subir respaldo cifrado a GitHub</button><button class="btn sec" data-act="cifGitLab">Subir respaldo cifrado a GitLab</button>' +
+    '<div class="botones col"><button class="btn sec" data-act="cifBajar">Descargar respaldo cifrado</button><button class="btn sec" data-act="cifGitHub">Subir respaldo cifrado a GitHub</button><button class="btn sec" data-act="cifGitLab">Subir respaldo cifrado a GitLab</button><button class="btn sec" data-act="cifGitLabProbar">Probar conexión con GitLab</button>' +
     '<button class="btn sec" data-act="cifProbar">Probar permiso de GitHub</button><label class="btn sec">Importar respaldo cifrado<input type="file" accept=".json,.enc,application/json" data-act="subirCif" hidden></label></div>' +
     (CON.resp.length ? '<ul class="vals">' + CON.resp.map(function (t) { return '<li class="' + (/^(Error|No)/.test(t) ? 'no' : 'ok') + '">' + esc(t) + '</li>'; }).join('') + '</ul><div class="botones"><button class="btn sec" data-act="cifLimpiar">Quitar mensajes</button></div>' : '') +
     '<p class="mut">GitHub: repositorio ' + esc(c.repo) + '. El token se pide cada vez y no se guarda; debe ser de acceso fino, solo a ese repositorio, con permiso de escritura de contenido.</p></section>';
@@ -3011,6 +3011,7 @@ function clickCon(t, a, e) {
     return true;
   }
   if (a === 'cifGitLab') { cifGitLab(); return true; }
+  if (a === 'cifGitLabProbar') { cifGitLabProbar(); return true; }
   return false;
 }
 var CLAVE_GL = 'auditoria.pa.gitlab';
@@ -3043,6 +3044,32 @@ function cifGitLab() {
       CON.resp = ['Subido a GitLab: ' + proy + '/' + ruta + ' (rama main). Revise el repositorio en GitLab.'];
     });
   }).catch(function (er) { CON.resp = ['Error: ' + er.message + ' El respaldo NO se subió a GitLab. Use "Descargar respaldo cifrado" para no perder el trabajo.']; }).then(refrescar);
+}
+/* Revisa el proyecto y el token de GitLab sin subir nada */
+function cifGitLabProbar() {
+  var gl = leerLS(CLAVE_GL) || {};
+  var proy = prompt('Proyecto de GitLab (grupo/repositorio)', gl.proyecto || '');
+  if (!proy) return;
+  proy = proy.trim();
+  if (!/^[\w.-]+(\/[\w.-]+)+$/.test(proy)) { CON.resp = ['Error: el proyecto debe escribirse como usuario/repositorio, sin "https://" ni espacios.']; refrescar(); return; }
+  var tok = prompt('Token de GitLab (no se guarda)');
+  if (!tok) return;
+  CON.resp = ['Revisando el proyecto en GitLab…']; refrescar();
+  conFetch('https://gitlab.com/api/v4/projects/' + encodeURIComponent(proy), { method: 'GET', headers: { 'PRIVATE-TOKEN': tok.trim() } }, 30000).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) {
+      if (r.status === 404) throw new Error('GitLab no encuentra "' + proy + '". Revise que el proyecto exista con ese nombre exacto, sin espacios, y que el token sea de la cuenta dueña del proyecto.');
+      if (r.status === 401) throw new Error('El token no es válido o venció. Cree uno nuevo con el alcance api.');
+      if (!r.ok) throw new Error(glError(r.status, j.message || j.error));
+      var perm = j.permissions || {};
+      var nivel = Math.max((perm.project_access && perm.project_access.access_level) || 0, (perm.group_access && perm.group_access.access_level) || 0);
+      if (nivel >= 30) {
+        CON.resp = ['Listo: el proyecto "' + (j.path_with_namespace || proy) + '" existe y el token puede escribir en él. Ya puede usar "Subir respaldo cifrado a GitLab".'];
+        escribirLS(CLAVE_GL, { proyecto: proy });
+      } else {
+        CON.resp = ['El proyecto existe, pero el token no tiene rol Developer o Maintainer en él. Pida al dueño del proyecto que le dé ese rol, o use un token de la cuenta dueña.'];
+      }
+    });
+  }).catch(function (er) { CON.resp = ['Error: ' + er.message]; }).then(refrescar);
 }
 function changeCon(t) {
   if (t.dataset.act === 'subirCif') {
@@ -3087,7 +3114,7 @@ var CHECK_ACEPTACION = [
 var PERMITIDO_CERRADO = {
   paso: 1, sig: 1, ant: 1, inicio: 1, abrir: 1, tab: 1, modoEst: 1, verEst: 1, todos: 1, imprimir: 1, xlsx: 1, respaldo: 1, tabInf: 1,
   toggleImp: 1, toggleImpDiario: 1, diag: 1, reparar: 1, instalarYa: 1, pinBloquear: 1, pinOlvido: 1, pinCambiar: 1, pinQuitar: 1, pinEntrar: 1,
-  cerrarEncargo: 1, reabrirEncargo: 1, probarCalc: 1, manual: 1, cifBajar: 1, cifGitHub: 1, cifProbar: 1, cifLimpiar: 1, conLogin: 1, conEmpresas: 1, conSalir: 1, docx: 1, cifGitLab: 1, nubeEntrar: 1, nubeCrear: 1, nubeSubir: 1, nubeLista: 1, nubeOtraClave: 1, nubeSalir: 1,
+  cerrarEncargo: 1, reabrirEncargo: 1, probarCalc: 1, manual: 1, cifBajar: 1, cifGitHub: 1, cifProbar: 1, cifLimpiar: 1, conLogin: 1, conEmpresas: 1, conSalir: 1, docx: 1, cifGitLab: 1, cifGitLabProbar: 1, nubeEntrar: 1, nubeCrear: 1, nubeSubir: 1, nubeLista: 1, nubeOtraClave: 1, nubeSalir: 1,
   nueva: 1, ejemplo: 1, gobCheck: 1, bitacoraVer: 1, cerrarManual: 1
 };
 var BITACORA_MAX = 500;
