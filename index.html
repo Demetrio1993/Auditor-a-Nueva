@@ -2624,7 +2624,7 @@ var CON_DEFECTO = {
   key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVqYmx5ZnZrZXN2dWx5cGNnbWtzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA4NzQ2MzIsImV4cCI6MjEwNjQ1MDYzMn0.rM_NY3wU2h8I2_4TEhWqx4rfvbVOyNy3Ug-y9q_K98k',
   email: '', repo: 'Demetrio1993/Contabilidad-Respaldos'
 };
-var CON = { emps: [], sel: '', rol: '', msg: [], bal: true, dia: true, ocupado: false };
+var CON = { resp: [], emps: [], sel: '', rol: '', msg: [], bal: true, dia: true, ocupado: false };
 
 function leerLS(k) { try { var t = localStorage.getItem(k); return t ? JSON.parse(t) : null; } catch (er) { return null; } }
 function escribirLS(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch (er) { /* sin almacenamiento */ } }
@@ -2878,7 +2878,8 @@ function cardRespaldoCif() {
   var c = conCfg();
   return '<section class="card"><h3>Respaldo cifrado</h3><p class="mut">El archivo se cifra con una clave que usted escribe (AES-256). Sin la clave nadie puede leerlo, ni siquiera en un repositorio. Si la olvida, no se puede recuperar.</p>' +
     '<div class="botones col"><button class="btn sec" data-act="cifBajar">Descargar respaldo cifrado</button><button class="btn sec" data-act="cifGitHub">Subir respaldo cifrado a GitHub</button>' +
-    '<label class="btn sec">Importar respaldo cifrado<input type="file" accept=".json,.enc,application/json" data-act="subirCif" hidden></label></div>' +
+    '<button class="btn sec" data-act="cifProbar">Probar permiso de GitHub</button><label class="btn sec">Importar respaldo cifrado<input type="file" accept=".json,.enc,application/json" data-act="subirCif" hidden></label></div>' +
+    (CON.resp.length ? '<ul class="vals">' + CON.resp.map(function (t) { return '<li class="' + (/^(Error|No)/.test(t) ? 'no' : 'ok') + '">' + esc(t) + '</li>'; }).join('') + '</ul><div class="botones"><button class="btn sec" data-act="cifLimpiar">Quitar mensajes</button></div>' : '') +
     '<p class="mut">GitHub: repositorio ' + esc(c.repo) + '. El token se pide cada vez y no se guarda; debe ser de acceso fino, solo a ese repositorio, con permiso de escritura de contenido.</p></section>';
 }
 function pedirClave(doble) {
@@ -2895,6 +2896,15 @@ function mezclarEstado(s) {
   });
   if (s.auditor && !ESTADO.auditor.nombre) ESTADO.auditor = s.auditor;
   guardar(); render(); aviso(n + ' encargo(s) importado(s)');
+}
+function ghFetch(url, tok, op, ms) {
+  op.headers = { Authorization: 'Bearer ' + tok.trim(), Accept: 'application/vnd.github+json' };
+  if (op.body) op.headers['Content-Type'] = 'application/json';
+  return conFetch(url, op, ms || 30000);
+}
+function ghError(st, msg) {
+  var m = { 401: 'El token no es válido o venció.', 403: 'El token no tiene permiso o se alcanzó un límite.', 404: 'GitHub no encuentra el repositorio o el token no tiene acceso a él (en repositorios privados GitHub responde así).', 409: 'Conflicto al guardar el archivo; intente de nuevo.', 422: 'GitHub rechazó la ruta o el contenido.' }[st];
+  return (m || ('Error ' + st + '.')) + (msg ? ' (' + msg + ')' : '');
 }
 function nombreCif() { var d = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16); return 'Respaldo_Auditoria_' + d + '.enc.json'; }
 
@@ -2927,17 +2937,39 @@ function clickCon(t, a, e) {
     cifrarTexto(respaldoTexto(), k).then(function (j) { descargar(nombreCif(), j, 'application/json'); aviso('Respaldo cifrado descargado'); }).catch(function () { aviso('No se pudo cifrar en este navegador'); });
     return true;
   }
+  if (a === 'cifLimpiar') { CON.resp = []; refrescar(); return true; }
+  if (a === 'cifProbar') {
+    var c0 = conCfg(), repo0 = prompt('Repositorio privado (usuario/repositorio)', c0.repo); if (!repo0) return true;
+    var tok0 = prompt('Token de GitHub (no se guarda)'); if (!tok0) return true;
+    c0.repo = repo0.trim(); conGuardarCfg(c0); CON.resp = ['Probando el permiso…']; refrescar();
+    ghFetch('https://api.github.com/repos/' + c0.repo, tok0, { method: 'GET' }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error(ghError(r.status, j.message));
+        CON.resp = [j.permissions && j.permissions.push ? 'El token puede escribir en ' + j.full_name + ' (' + (j.private ? 'privado' : 'público') + ', rama ' + j.default_branch + '). Ya puede subir el respaldo.' : 'No: el token lee ' + j.full_name + ' pero no puede escribir. Cree el token con permiso Contents: Read and write.'];
+      });
+    }).catch(function (er) { CON.resp = ['Error: ' + er.message]; }).then(refrescar);
+    return true;
+  }
   if (a === 'cifGitHub') {
     var cfg = conCfg(), repo = prompt('Repositorio privado (usuario/repositorio)', cfg.repo); if (!repo) return true;
+    repo = repo.trim();
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { aviso('Escriba el repositorio como usuario/repositorio'); return true; }
     var tok = prompt('Token de GitHub (no se guarda)'); if (!tok) return true;
     var k2 = pedirClave(true); if (!k2) return true;
     cfg.repo = repo; conGuardarCfg(cfg);
     var ruta = 'auditoria/' + nombreCif();
+    CON.resp = ['Cifrando el respaldo…']; refrescar();
     cifrarTexto(respaldoTexto(), k2).then(function (j) {
-      return conFetch('https://api.github.com/repos/' + repo + '/contents/' + ruta, { method: 'PUT', headers: { Authorization: 'Bearer ' + tok.trim(), Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Respaldo cifrado de auditoría', content: btoa(unescape(encodeURIComponent(j))) }) }, 60000);
-    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.message || ('Error ' + r.status)); aviso('Subido a ' + repo + '/' + ruta); }); })
-      .catch(function (er) { aviso('No se pudo subir: ' + er.message); });
+      CON.resp = ['Subiendo a ' + repo + '…']; refrescar();
+      return ghFetch('https://api.github.com/repos/' + repo + '/contents/' + ruta, tok, { method: 'PUT', body: JSON.stringify({ message: 'Respaldo cifrado de auditoría', content: btoa(unescape(encodeURIComponent(j))) }) }, 60000);
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error(ghError(r.status, j.message));
+        var url = (j.content && j.content.html_url) || '';
+        CON.resp = ['Subido y confirmado por GitHub: ' + repo + '/' + ruta + (j.commit && j.commit.sha ? ' (commit ' + String(j.commit.sha).slice(0, 7) + ')' : '') + '.', 'En GitHub abra la carpeta "auditoria" dentro de ' + repo + ' (rama principal). Si no la ve, actualice la página.'];
+        if (url) CON.resp.push(url);
+      });
+    }).catch(function (er) { CON.resp = ['Error: ' + er.message + ' El respaldo NO se subió. Use "Descargar respaldo cifrado" para no perder el trabajo.']; }).then(refrescar);
     return true;
   }
   return false;
@@ -2972,7 +3004,7 @@ function changeCon(t) {
 'use strict';
 
 var CLAVE = 'auditoria.pa.v1';
-var VERSION_APP = 'B4.0';
+var VERSION_APP = 'B4.1';
 var PASOS = [
   { n: 1, t: 'Encargo' }, { n: 2, t: 'Balanza' }, { n: 3, t: 'Planificación' }, { n: 4, t: 'Diario' }, { n: 5, t: 'Pruebas' }, { n: 6, t: 'Ajustes' },
   { n: 7, t: 'Balanza auditada' }, { n: 8, t: 'Estados' }, { n: 9, t: 'Cartas' }, { n: 10, t: 'Dictamen' }, { n: 11, t: 'Informe' }, { n: 12, t: 'Control' }, { n: 13, t: 'Exportar' }
