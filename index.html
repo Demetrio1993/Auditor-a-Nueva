@@ -2919,6 +2919,7 @@ function ghError(st, msg) {
 function nombreCif() { var d = new Date(Date.now() - 5 * 3600000).toISOString().replace(/[:T]/g, '-').slice(0, 16); return 'Respaldo_Auditoria_' + d + '_PA.enc.json'; }
 
 function clickCon(t, a, e) {
+  if (/^nube/.test(a)) return clickNube(t, a);
   if (a === 'conLogin') {
     var c = conLeerCampos(), pass = (document.getElementById('conPass') || {}).value || '';
     if (!c.email || !pass) { aviso('Escriba el correo y la contraseña'); return true; }
@@ -3028,7 +3029,7 @@ var CHECK_ACEPTACION = [
 var PERMITIDO_CERRADO = {
   paso: 1, sig: 1, ant: 1, inicio: 1, abrir: 1, tab: 1, modoEst: 1, verEst: 1, todos: 1, imprimir: 1, xlsx: 1, respaldo: 1, tabInf: 1,
   toggleImp: 1, toggleImpDiario: 1, diag: 1, reparar: 1, instalarYa: 1, pinBloquear: 1, pinOlvido: 1, pinCambiar: 1, pinQuitar: 1, pinEntrar: 1,
-  cerrarEncargo: 1, reabrirEncargo: 1, probarCalc: 1, manual: 1, cifBajar: 1, cifGitHub: 1, cifProbar: 1, cifLimpiar: 1, conLogin: 1, conEmpresas: 1, conSalir: 1,
+  cerrarEncargo: 1, reabrirEncargo: 1, probarCalc: 1, manual: 1, cifBajar: 1, cifGitHub: 1, cifProbar: 1, cifLimpiar: 1, conLogin: 1, conEmpresas: 1, conSalir: 1, nubeEntrar: 1, nubeCrear: 1, nubeSubir: 1, nubeLista: 1, nubeOtraClave: 1, nubeSalir: 1,
   nueva: 1, ejemplo: 1, gobCheck: 1, bitacoraVer: 1, cerrarManual: 1
 };
 var BITACORA_MAX = 500;
@@ -3266,11 +3267,195 @@ function avisoCerrado() { aviso('Encargo cerrado: reábralo en el módulo 12 par
 
 </script>
 <script>
+/* nube.js - Copia en la nube de la app de auditoría (proyecto Auditoría-PA, separado de la app contable).
+   Los encargos se cifran en el teléfono antes de subirlos; la nube solo guarda texto cifrado. */
+'use strict';
+
+var CLAVE_NUBE_SES = 'auditoria.pa.nube.sesion';
+var NUBE_DEFECTO = {
+  url: 'https://kgwnywsgzgxkzqtmjaeo.supabase.co',
+  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtnd255d3Nnemd4a3pxdG1qYWVvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM1Mzk2NTMsImV4cCI6MjEwOTExNTY1M30.nUkw3Y9QrrC9ArLyyTjYiTZo0ta6l3NS7LQ1JhEmvjw'
+};
+/* La clave de cifrado vive solo en memoria mientras la app está abierta; nunca se guarda. */
+var NUBE = { msg: [], lista: null, ocupado: false, clave: null };
+
+function nubeSesion() { return leerLS(CLAVE_NUBE_SES); }
+function nubeCab(tok) {
+  var h = { apikey: NUBE_DEFECTO.key, 'Content-Type': 'application/json' };
+  if (tok) h.Authorization = 'Bearer ' + tok;
+  return h;
+}
+function nubeTexto(j) {
+  var m = (j && (j.msg || j.message || j.error_description || j.error)) || 'No se pudo completar la operación';
+  if (/already|registered/i.test(m)) return 'Ese correo ya tiene cuenta. Entre con su contraseña.';
+  if (/least 6|too short|weak/i.test(m)) return 'La contraseña debe tener al menos 6 caracteres.';
+  if (/invalid login|invalid_credentials/i.test(m)) return 'Correo o contraseña incorrectos.';
+  return m;
+}
+function nubeGuardarSesion(j) {
+  var s = { access: j.access_token, refresh: j.refresh_token, exp: Date.now() + (Number(j.expires_in) || 3600) * 1000, email: (j.user && j.user.email) || '', uid: (j.user && j.user.id) || '' };
+  escribirLS(CLAVE_NUBE_SES, s);
+  return s;
+}
+
+/* Sesión: entrar, crear cuenta y renovar el token */
+function nubeAuth(email, pass, tipo) {
+  var url = NUBE_DEFECTO.url + (tipo === 'signup' ? '/auth/v1/signup' : '/auth/v1/token?grant_type=password');
+  return conFetch(url, { method: 'POST', headers: nubeCab(), body: JSON.stringify({ email: email, password: pass }) }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) {
+      if (!r.ok) throw new Error(nubeTexto(j));
+      if (!j.access_token) return null; /* cuenta creada; falta confirmar el correo */
+      return nubeGuardarSesion(j);
+    });
+  });
+}
+function nubeToken() {
+  var s = nubeSesion();
+  if (!s) return Promise.reject(new Error('Entre primero con su correo y contraseña.'));
+  if (s.exp - Date.now() > 60000) return Promise.resolve(s);
+  return conFetch(NUBE_DEFECTO.url + '/auth/v1/token?grant_type=refresh_token', { method: 'POST', headers: nubeCab(), body: JSON.stringify({ refresh_token: s.refresh }) }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) {
+      if (!r.ok || !j.access_token) { escribirLS(CLAVE_NUBE_SES, null); throw new Error('La sesión venció. Entre de nuevo.'); }
+      return nubeGuardarSesion(j);
+    });
+  });
+}
+
+/* Clave de cifrado: se pide una vez por sesión de la app (doble al primer uso) */
+function nubeClave(doble) {
+  if (NUBE.clave) return NUBE.clave;
+  var k = pedirClave(doble);
+  if (k) NUBE.clave = k;
+  return k;
+}
+
+function nubeEntrar(crear) {
+  var email = ((document.getElementById('nbEmail') || {}).value || '').trim();
+  var pass = (document.getElementById('nbPass') || {}).value || '';
+  if (!/^\S+@\S+\.\S+$/.test(email) || pass.length < 6) { NUBE.msg = ['Escriba un correo válido y una contraseña de al menos 6 caracteres.']; refrescar(); return; }
+  NUBE.ocupado = true; NUBE.msg = ['Conectando…']; refrescar();
+  nubeAuth(email, pass, crear ? 'signup' : 'password').then(function (s) {
+    NUBE.msg = s ? ['Sesión iniciada como ' + s.email + '.'] : ['Cuenta creada. Revise su correo, confirme la cuenta y luego entre con la misma contraseña.'];
+  }).catch(function (er) { NUBE.msg = ['Error: ' + er.message]; }).then(function () { NUBE.ocupado = false; refrescar(); });
+}
+
+function nubeSubir() {
+  var k = nubeClave(true);
+  if (!k) return;
+  NUBE.ocupado = true; NUBE.msg = ['Cifrando los encargos…']; refrescar();
+  var ses;
+  nubeToken().then(function (x) {
+    ses = x;
+    var ids = Object.keys(ESTADO.empresas || {});
+    if (!ids.length) throw new Error('No hay encargos para subir.');
+    return Promise.all(ids.map(function (id) {
+      var emp = ESTADO.empresas[id];
+      return cifrarTexto(JSON.stringify(emp), k).then(function (sobre) {
+        /* El nombre del cliente no sale en claro: la columna solo dice "Encargo cifrado" */
+        return { id: id, user_id: ses.uid, nombre: 'Encargo cifrado', datos_cifrados: sobre, version: 1, actualizado: new Date().toISOString() };
+      });
+    }));
+  }).then(function (filas) {
+    NUBE.msg = ['Subiendo a la nube…']; refrescar();
+    return conFetch(NUBE_DEFECTO.url + '/rest/v1/encargos_nube?on_conflict=user_id,id', { method: 'POST', headers: Object.assign(nubeCab(ses.access), { Prefer: 'resolution=merge-duplicates,return=minimal' }), body: JSON.stringify(filas) }, 60000).then(function (r) {
+      if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw new Error(nubeTexto(j)); });
+      NUBE.lista = null;
+      NUBE.msg = [filas.length + ' encargo(s) subido(s) cifrados a la nube. El teléfono no cambió.'];
+      marcarRespaldo();
+    });
+  }).catch(function (er) { NUBE.msg = ['Error: ' + er.message + ' Nada cambió en el teléfono.']; }).then(function () { NUBE.ocupado = false; refrescar(); });
+}
+
+function nubeLista() {
+  NUBE.ocupado = true; NUBE.msg = ['Buscando copias…']; refrescar();
+  nubeToken().then(function (ses) {
+    return conFetch(NUBE_DEFECTO.url + '/rest/v1/encargos_nube?select=id,nombre,version,actualizado&order=actualizado.desc', { method: 'GET', headers: nubeCab(ses.access) }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) {
+        if (!r.ok || !Array.isArray(j)) throw new Error(nubeTexto(j));
+        NUBE.lista = j;
+        NUBE.msg = [j.length ? j.length + ' copia(s) en la nube.' : 'Todavía no hay copias en la nube.'];
+      });
+    });
+  }).catch(function (er) { NUBE.msg = ['Error: ' + er.message]; }).then(function () { NUBE.ocupado = false; refrescar(); });
+}
+
+function nubeRestaurar(id) {
+  var k = nubeClave(false);
+  if (!k) return;
+  nubeToken().then(function (ses) {
+    return conFetch(NUBE_DEFECTO.url + '/rest/v1/encargos_nube?id=eq.' + encodeURIComponent(id) + '&select=id,datos_cifrados', { method: 'GET', headers: nubeCab(ses.access) }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) {
+        if (!r.ok || !Array.isArray(j)) throw new Error(nubeTexto(j));
+        if (!j.length) throw new Error('Esa copia ya no está en la nube.');
+        return j[0];
+      });
+    });
+  }).then(function (fila) {
+    return descifrarTexto(fila.datos_cifrados, k).then(function (txt) {
+      var s = { empresas: {}, auditor: ESTADO.auditor };
+      s.empresas[fila.id] = JSON.parse(txt);
+      return s;
+    }, function () {
+      NUBE.clave = null;
+      throw new Error('La clave de cifrado no coincide con esta copia. Pruebe con "Cambiar clave de cifrado".');
+    });
+  }).then(function (s) {
+    NUBE.msg = [];
+    mezclarEstado(s);
+  }).catch(function (er) { NUBE.msg = ['Error: ' + er.message]; }).then(refrescar);
+}
+
+function nubeSalir() {
+  escribirLS(CLAVE_NUBE_SES, null);
+  NUBE.clave = null; NUBE.lista = null;
+  NUBE.msg = ['Sesión cerrada. Las copias siguen en la nube.'];
+}
+
+function nubeCard() {
+  var s = nubeSesion();
+  var h = '<section class="card"><h3>Copia en la nube</h3>' +
+    '<p class="mut">Cuenta de Auditoría Panamá, en un proyecto aparte de la app contable. Los encargos se cifran en este teléfono antes de subirlos: en la nube solo queda texto cifrado. La contraseña de la cuenta no es la clave de cifrado.</p>';
+  if (!s) {
+    h += '<div class="col"><input id="nbEmail" type="email" inputmode="email" autocomplete="username" placeholder="Correo">' +
+      '<input id="nbPass" type="password" autocomplete="current-password" placeholder="Contraseña (mínimo 6 caracteres)"></div>' +
+      '<div class="botones"><button class="btn" data-act="nubeEntrar">Entrar</button><button class="btn sec" data-act="nubeCrear">Crear cuenta</button></div>';
+  } else {
+    h += '<p class="mut">Sesión: ' + esc(s.email) + '</p><div class="botones col">' +
+      '<button class="btn" data-act="nubeSubir">Subir encargos cifrados</button>' +
+      '<button class="btn sec" data-act="nubeLista">Ver copias en la nube</button>' +
+      '<button class="btn sec" data-act="nubeOtraClave">Cambiar clave de cifrado</button>' +
+      '<button class="btn sec" data-act="nubeSalir">Cerrar sesión</button></div>';
+    if (NUBE.lista && NUBE.lista.length) {
+      h += '<ul class="vals">' + NUBE.lista.map(function (f) {
+        return '<li class="ok">' + esc(f.nombre) + ' · ' + esc(fechaHoraPA(f.actualizado)) +
+          ' <button class="btn sec" data-act="nubeRestaurar" data-id="' + esc(f.id) + '">Restaurar</button></li>';
+      }).join('') + '</ul>';
+    }
+  }
+  if (NUBE.msg.length) h += '<ul class="vals">' + NUBE.msg.map(function (t) { return '<li class="' + (/^Error/.test(t) ? 'no' : 'ok') + '">' + esc(t) + '</li>'; }).join('') + '</ul>';
+  h += '<p class="mut">Cada fin de mes Supabase guarda una copia cifrada de todos los encargos (23:59, hora de Panamá).</p></section>';
+  return h;
+}
+
+function clickNube(t, a) {
+  if (a === 'nubeEntrar') { nubeEntrar(false); return true; }
+  if (a === 'nubeCrear') { nubeEntrar(true); return true; }
+  if (a === 'nubeSubir') { nubeSubir(); return true; }
+  if (a === 'nubeLista') { nubeLista(); return true; }
+  if (a === 'nubeRestaurar') { nubeRestaurar(t.dataset.id); return true; }
+  if (a === 'nubeOtraClave') { NUBE.clave = null; NUBE.msg = ['La próxima vez se pedirá la nueva clave.']; refrescar(); return true; }
+  if (a === 'nubeSalir') { nubeSalir(); refrescar(); return true; }
+  return false;
+}
+/* FIN DEL ARCHIVO nube.js */
+
+</script>
+<script>
 /* app.js - Interfaz de la app de auditoría (módulos 1 a 9) */
 'use strict';
 
 var CLAVE = 'auditoria.pa.v1';
-var VERSION_APP = 'B5.0';
+var VERSION_APP = 'B5.1';
 var PASOS = [
   { n: 1, t: 'Encargo' }, { n: 2, t: 'Balanza' }, { n: 3, t: 'Planificación' }, { n: 4, t: 'Diario' }, { n: 5, t: 'Pruebas' }, { n: 6, t: 'Ajustes' },
   { n: 7, t: 'Balanza auditada' }, { n: 8, t: 'Estados' }, { n: 9, t: 'Cartas' }, { n: 10, t: 'Dictamen' }, { n: 11, t: 'Informe' }, { n: 12, t: 'Control' }, { n: 13, t: 'Exportar' }
@@ -3416,7 +3601,7 @@ function vInicio() {
     '<p class="mut">Los datos viven solo en este teléfono. Descargue un respaldo con frecuencia.</p></section>';
   h += cardRespaldoRecordado() + cardManualBtn();
   h += cardPin();
-  h += cardRespaldoCif();
+  h += nubeCard() + cardRespaldoCif();
   h += cardInstalar();
   return h;
 }
