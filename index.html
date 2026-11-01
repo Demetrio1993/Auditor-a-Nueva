@@ -2615,11 +2615,364 @@ function hojasInforme(e) {
 
 </script>
 <script>
+/* conexion.js - Bloque 4: conexión de SOLO LECTURA con la app contable (Supabase) y respaldo cifrado */
+'use strict';
+
+var CLAVE_CON = 'auditoria.pa.conexion', CLAVE_SES = 'auditoria.pa.sesion';
+var CON_DEFECTO = {
+  url: 'https://ujblyfvkesvulypcgmks.supabase.co',
+  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVqYmx5ZnZrZXN2dWx5cGNnbWtzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA4NzQ2MzIsImV4cCI6MjEwNjQ1MDYzMn0.rM_NY3wU2h8I2_4TEhWqx4rfvbVOyNy3Ug-y9q_K98k',
+  email: '', repo: 'Demetrio1993/Contabilidad-Respaldos'
+};
+var CON = { emps: [], sel: '', rol: '', msg: [], bal: true, dia: true, ocupado: false };
+
+function leerLS(k) { try { var t = localStorage.getItem(k); return t ? JSON.parse(t) : null; } catch (er) { return null; } }
+function escribirLS(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch (er) { /* sin almacenamiento */ } }
+function conCfg() { var c = leerLS(CLAVE_CON) || {}; return { url: c.url || CON_DEFECTO.url, key: c.key || CON_DEFECTO.key, email: c.email || '', repo: c.repo || CON_DEFECTO.repo }; }
+function conGuardarCfg(c) { escribirLS(CLAVE_CON, c); }
+function conSesion() { return leerLS(CLAVE_SES); }
+function conMsg(t) { CON.msg.push(t); }
+
+/* ---------- Red: solo GET a la base de datos; el único POST es el inicio de sesión ---------- */
+function conFetch(url, op, ms) {
+  var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null, h = ctl ? setTimeout(function () { ctl.abort(); }, ms || 30000) : null;
+  if (ctl) op.signal = ctl.signal;
+  return fetch(url, op).then(function (r) { if (h) clearTimeout(h); return r; }, function (er) { if (h) clearTimeout(h); throw new Error(er && er.name === 'AbortError' ? 'La conexión tardó demasiado' : 'Sin conexión con el servidor'); });
+}
+function conErr(r, j) { return (j && (j.msg || j.message || j.error_description || j.error)) || ('Error ' + r.status); }
+function conAuth(c, cuerpo, tipo) {
+  return conFetch(c.url + '/auth/v1/token?grant_type=' + tipo, { method: 'POST', headers: { apikey: c.key, 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) {
+      if (!r.ok || !j.access_token) throw new Error(tipo === 'password' ? 'Correo o contraseña incorrectos' : 'La sesión venció; inicie sesión de nuevo');
+      var s = { access: j.access_token, refresh: j.refresh_token, exp: Date.now() + (Number(j.expires_in) || 3600) * 1000, email: (j.user && j.user.email) || c.email, uid: (j.user && j.user.id) || '' };
+      escribirLS(CLAVE_SES, s); return s;
+    });
+  });
+}
+function conToken() {
+  var s = conSesion(), c = conCfg();
+  if (!s) return Promise.reject(new Error('Inicie sesión primero'));
+  if (s.exp - Date.now() > 60000) return Promise.resolve(s.access);
+  return conAuth(c, { refresh_token: s.refresh }, 'refresh_token').then(function (n) { return n.access; });
+}
+function conGET(ruta) {
+  var c = conCfg(), todo = [];
+  function pagina(desde) {
+    return conToken().then(function (tok) {
+      return conFetch(c.url + '/rest/v1/' + ruta, { method: 'GET', headers: { apikey: c.key, Authorization: 'Bearer ' + tok, Range: desde + '-' + (desde + 999), 'Range-Unit': 'items' } });
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) {
+        if (!r.ok && r.status !== 206) throw new Error(conErr(r, j));
+        if (!Array.isArray(j)) throw new Error('Respuesta inesperada del servidor');
+        todo = todo.concat(j);
+        return j.length >= 1000 ? pagina(desde + 1000) : todo;
+      });
+    });
+  }
+  return pagina(0);
+}
+
+/* ---------- Transformación: plan de cuentas de la app contable a rubros de auditoría ---------- */
+var PREFIJO_RUBRO = [
+  ['1.1.01', 'EFE'], ['1.1.02', 'CXC'], ['1.1.03', 'OCC'], ['1.1.04', 'CXC'], ['1.1.05', 'INV'], ['1.1.06', 'ANT'],
+  ['1.2.01', 'PPE'], ['1.2.02', 'DEPA'], ['1.2.03', 'INT'], ['1.2.04', 'INT'], ['1.2.05', 'OANC'],
+  ['2.1.01', 'CXP'], ['2.1.02', 'PRC'], ['2.1.03', 'IMPP'], ['2.1.04', 'LAB'], ['2.1.05', 'ACR'], ['2.2', 'PRL'],
+  ['3.1', 'CAP'], ['3.2', 'RET'], ['3.3', 'URE'], ['4.1', 'ING'], ['4.2', 'OIN'], ['5', 'COS'],
+  ['6.1.06', 'GDEP'], ['6.1', 'GOP'], ['6.2', 'GFI'], ['6.3.02', 'GISR'], ['7', 'OIN']
+];
+var TIPOS_RESULTADO = { ingreso: 1, costo: 1, gasto: 1, extraordinario: 1 };
+function conRubro(num, nombre, tipo) {
+  var n = String(nombre || '').toLowerCase(), r = '';
+  for (var i = 0; i < PREFIJO_RUBRO.length; i++) {
+    var p = PREFIJO_RUBRO[i][0];
+    if (num === p || String(num).indexOf(p + '.') === 0) { r = PREFIJO_RUBRO[i][1]; break; }
+  }
+  if (r === 'ANT' && /impuesto|itbms|isr|cr[eé]dito fiscal|anticipo de renta/.test(n)) r = 'IMPA';
+  if (r === 'ACR' && /propietario|due[nñ]o|socio/.test(n)) r = 'CXPP';
+  if (r === 'GOP' && /deprec|amortiz/.test(n)) r = 'GDEP';
+  if (!r) r = sugerirRubro(num, nombre);
+  return r;
+}
+function conMes(f) { return parseInt(String(f).slice(5, 7), 10) - 1; }
+
+/* cuentasDB: [{id,numero,nombre,tipo}], asientos con asiento_lineas embebidas */
+function conConstruir(cuentasDB, asientos, anio, fin) {
+  var y = String(anio), ini = y + '-01-01', ant = String(Number(anio) - 1) + '-01-01', avisos = [];
+  var anul = {}, validos = [], nAnul = 0;
+  asientos.forEach(function (a) { if (a.anulado) { anul[a.id] = 1; nAnul++; } });
+  asientos.forEach(function (a) { if (!anul[a.id] && !(a.asiento_anula_id && anul[a.asiento_anula_id]) && !a.asiento_anula_id) validos.push(a); });
+  var porId = {}; cuentasDB.forEach(function (c) { porId[c.id] = c; });
+  var acc = {};
+  function A(cid) { return acc[cid] || (acc[cid] = { pre: 0, ant: 0, m: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }); }
+  var nLin = 0;
+  validos.forEach(function (a) {
+    var f = String(a.fecha).slice(0, 10);
+    (a.asiento_lineas || []).forEach(function (l) {
+      var v = (Number(l.debito) || 0) - (Number(l.credito) || 0), o = A(l.cuenta_id); nLin++;
+      if (f < ini) { o.pre += v; if (f >= ant) o.ant += v; }
+      else if (f <= fin) o.m[conMes(f)] += v;
+    });
+  });
+  var out = [], sumSi = 0;
+  Object.keys(acc).forEach(function (cid) {
+    var c = porId[cid]; if (!c) return;
+    var o = acc[cid], res = !!TIPOS_RESULTADO[c.tipo];
+    var si = res ? 0 : r2(o.pre), pa = res ? r2(o.ant) : r2(o.pre);
+    var mv = o.m.map(r2);
+    if (Math.abs(si) < 0.005 && Math.abs(pa) < 0.005 && mv.every(function (x) { return Math.abs(x) < 0.005; })) return;
+    if (!res) sumSi += si;
+    out.push({ cod: c.numero, nombre: c.nombre, rubro: conRubro(c.numero, c.nombre, c.tipo), si: si, m: mv, pa: pa });
+  });
+  out.sort(function (a, b) { return a.cod < b.cod ? -1 : a.cod > b.cod ? 1 : 0; });
+  sumSi = r2(sumSi);
+  if (Math.abs(sumSi) >= 0.005) {
+    var ure = out.filter(function (c) { return c.rubro === 'URE'; })[0];
+    if (!ure) { ure = { cod: 'AJ-SI', nombre: 'Resultados de años anteriores (diferencia de saldos iniciales)', rubro: 'URE', si: 0, m: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], pa: 0 }; out.push(ure); }
+    ure.si = r2(ure.si - sumSi);
+    avisos.push('Los saldos iniciales sumaban B/. ' + fmt(sumSi) + ' porque hay resultados de años anteriores sin cerrar en los libros. La diferencia se llevó a ' + ure.cod + ' (utilidades retenidas). Revise esa cuenta.');
+  }
+  var sinRubro = out.filter(function (c) { return !c.rubro; });
+  if (sinRubro.length) avisos.push(sinRubro.length + ' cuenta(s) quedaron sin rubro (' + sinRubro.slice(0, 4).map(function (c) { return c.cod; }).join(', ') + (sinRubro.length > 4 ? '…' : '') + '). Elíjalo en la tabla.');
+  avisos.push('El año anterior de las cuentas de resultados se tomó del movimiento del año anterior. Si ese año tuvo asiento de cierre, quedará neutralizado: compárelo con los estados que entregó el cliente.');
+  avisos.push('El impuesto sobre la renta y el seguro educativo de la app contable se calculan en el estado de resultados y no generan asiento; por eso no aparecen en los libros.');
+  return { cuentas: out, avisos: avisos, anulados: nAnul, lineas: nLin, validos: validos };
+}
+
+function conHoraPanama(iso) {
+  var ms = Date.parse(iso); if (isNaN(ms)) return '';
+  return new Date(ms - 5 * 3600000).toISOString().slice(11, 16);
+}
+function conOrigen(a) {
+  if (a.importacion_id) return 'Importación';
+  return ({ transaccion: 'Sistema (transacción)', apertura: 'Sistema (apertura)', ajuste: 'Manual (ajuste)' })[a.origen] || (a.origen || 'Manual');
+}
+function conDiario(validos, cuentaPorId, trans, correos, anio, fin) {
+  var ini = String(anio) + '-01-01', filas = [];
+  validos.forEach(function (a) {
+    var f = String(a.fecha).slice(0, 10); if (f < ini || f > fin) return;
+    var t = trans[a.id] || {};
+    (a.asiento_lineas || []).forEach(function (l) {
+      var c = cuentaPorId[l.cuenta_id]; if (!c) return;
+      var de = r2(l.debito), ha = r2(l.credito); if (!de && !ha) return;
+      filas.push({ f: f, hr: conHoraPanama(a.creado_en), as: String(a.consecutivo != null ? a.consecutivo : a.id).slice(0, 12), cod: c.numero, ds: l.descripcion || a.descripcion || '', de: de, ha: ha,
+        us: correos[a.id] || (a.creado_por ? String(a.creado_por).slice(0, 8) : ''), or: conOrigen(a), dc: t.num || a.referencia || '', te: t.ter || '' });
+    });
+  });
+  return filas;
+}
+
+/* ---------- Acciones ---------- */
+function conIniciar(email, pass) {
+  var c = conCfg(); c.email = email; conGuardarCfg(c);
+  CON.msg = [];
+  return conAuth(c, { email: email, password: pass }, 'password').then(function (s) {
+    conMsg('Sesión iniciada como ' + s.email + '.');
+    return conGET('empresas?select=id,razon_social,nombre_comercial,ruc,contribuyente_itbms&order=razon_social.asc');
+  }).then(function (l) {
+    CON.emps = l; CON.sel = l.length ? l[0].id : '';
+    conMsg(l.length + ' empresa(s) disponibles.');
+    return conRol();
+  });
+}
+function conRol() {
+  var s = conSesion(); if (!s || !s.uid) return Promise.resolve();
+  return conGET('empresa_usuarios?select=empresa_id,rol&usuario_id=eq.' + s.uid).then(function (l) {
+    CON.roles = {}; l.forEach(function (x) { CON.roles[x.empresa_id] = x.rol; });
+  }).catch(function () { CON.roles = {}; });
+}
+function conCerrar() { escribirLS(CLAVE_SES, null); CON.emps = []; CON.sel = ''; CON.roles = {}; CON.msg = ['Sesión cerrada.']; }
+
+function conTraer(e, empresaId, anio, fin, queBal, queDia) {
+  CON.msg = []; var emp = CON.emps.filter(function (x) { return x.id === empresaId; })[0] || {};
+  var cuentasDB, asientos, trans = {}, correos = {};
+  var q = 'asientos?empresa_id=eq.' + empresaId + '&fecha=lte.' + fin + '&select=id,consecutivo,fecha,descripcion,referencia,origen,creado_por,creado_en,anulado,asiento_anula_id,importacion_id,asiento_lineas(cuenta_id,debito,credito,descripcion)&order=fecha.asc,consecutivo.asc';
+  return conGET('cuentas?empresa_id=eq.' + empresaId + '&select=id,numero,nombre,tipo').then(function (l) {
+    cuentasDB = l; conMsg(l.length + ' cuentas leídas.');
+    return conGET(q);
+  }).then(function (l) {
+    asientos = l; conMsg(l.length + ' asientos leídos hasta el ' + fin + '.');
+    if (!queDia) return null;
+    return conGET('transacciones?empresa_id=eq.' + empresaId + '&fecha=gte.' + anio + '-01-01&select=asiento_id,numero_factura,nombre_tercero').then(function (t) {
+      t.forEach(function (x) { if (x.asiento_id) trans[x.asiento_id] = { num: x.numero_factura || '', ter: x.nombre_tercero || '' }; });
+      return conGET('bitacora?empresa_id=eq.' + empresaId + '&tabla=eq.asientos&accion=eq.crear&select=registro_id,usuario_correo').then(function (b) {
+        b.forEach(function (x) { if (x.registro_id) correos[x.registro_id] = x.usuario_correo || ''; });
+      }).catch(function () { conMsg('No se pudieron leer los usuarios de la bitácora; el diario mostrará un código corto.'); });
+    });
+  }).then(function () {
+    var r = conConstruir(cuentasDB, asientos, anio, fin);
+    var cuentaPorId = {}; cuentasDB.forEach(function (c) { cuentaPorId[c.id] = c; });
+    if (queBal) {
+      e.cuentas = r.cuentas;
+      conMsg('Balanza: ' + r.cuentas.length + ' cuentas con saldo o movimiento (' + r.lineas + ' líneas de asiento).');
+      if (!e.encargo.nombre) e.encargo.nombre = emp.razon_social || emp.nombre_comercial || '';
+      if (!e.encargo.anio) e.encargo.anio = String(anio);
+      if (!e.encargo.fechaIni) e.encargo.fechaIni = anio + '-01-01';
+      if (!e.encargo.fechaCierre) e.encargo.fechaCierre = fin;
+      if (emp.contribuyente_itbms === true) e.encargo.itbms = 'Sí';
+    }
+    if (queDia) {
+      e.diario.filas = conDiario(r.validos, cuentaPorId, trans, correos, anio, fin); e.diario.noAplica = false;
+      conMsg('Diario: ' + e.diario.filas.length + ' líneas. Las horas son las de registro en la app contable (hora de Panamá); los asientos importados se marcan como Importación.');
+    }
+    if (r.anulados) conMsg(r.anulados + ' asiento(s) anulado(s) se excluyeron junto con su reverso.');
+    r.avisos.forEach(function (x) { conMsg('Aviso: ' + x); });
+    e.conexion = { empresaId: empresaId, empresa: emp.razon_social || emp.nombre_comercial || '', anio: anio, fecha: new Date().toISOString(), asientos: asientos.length };
+    guardar();
+  });
+}
+
+/* ---------- Vista de la conexión (módulo 2) ---------- */
+function conVista(e) {
+  var c = conCfg(), s = conSesion(), ab = UI.conOpen ? ' open' : '';
+  var h = '<details class="card" data-conbox="1"' + ab + '><summary><b>Traer datos de la app contable (solo lectura)</b></summary>' +
+    '<p class="mut">Lee la balanza y el diario directamente de la base de la app contable. Esta app solo lee: no escribe ni modifica nada. Use una cuenta de perfil <b>lector</b>: así la base de datos misma impide cambios.</p>';
+  if (!s) {
+    h += '<label class="campo"><span>Correo</span><input id="conMail" type="email" data-con="email" data-nr="1" autocomplete="username" value="' + esc(c.email) + '"></label>' +
+      '<label class="campo"><span>Contraseña (no se guarda)</span><input id="conPass" type="password" autocomplete="current-password" data-nr="1"></label>' +
+      '<div class="botones"><button class="btn" data-act="conLogin">Iniciar sesión</button></div>' +
+      '<details><summary class="mut">Ajustes de conexión</summary><label class="campo"><span>Dirección de la base</span><input id="conUrl" data-con="url" data-nr="1" value="' + esc(c.url) + '"></label>' +
+      '<label class="campo"><span>Clave pública (anon)</span><input id="conKey" data-con="key" data-nr="1" value="' + esc(c.key) + '"></label></details>';
+  } else {
+    h += '<p>Sesión: <b>' + esc(s.email || c.email) + '</b> <button class="btn sec" data-act="conSalir">Cerrar sesión</button></p>';
+    if (CON.emps.length) {
+      var rol = CON.roles && CON.roles[CON.sel];
+      h += '<label class="campo"><span>Empresa</span><select data-con="sel" data-nr="1">' + CON.emps.map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === CON.sel ? ' selected' : '') + '>' + esc(x.razon_social || x.nombre_comercial || x.id) + '</option>'; }).join('') + '</select></label>';
+      if (rol) h += '<p class="' + (rol === 'lector' ? 'okt' : 'mal') + '">Su rol en esta empresa: ' + esc(rol) + (rol === 'lector' ? ' (solo lectura).' : '. Para auditar conviene usar un usuario lector.') + '</p>';
+      h += '<div class="dos"><label class="campo"><span>Ejercicio</span><input data-con="anio" data-nr="1" inputmode="numeric" value="' + esc(e.encargo.anio || '') + '"></label><label class="campo"><span>Cierre</span><input type="date" data-con="fin" data-nr="1" value="' + esc(e.encargo.fechaCierre || '') + '"></label></div>' +
+        '<label class="chk"><input type="checkbox" data-con="bal" data-nr="1"' + (CON.bal ? ' checked' : '') + '><span>Traer la balanza (reemplaza las cuentas actuales)</span></label>' +
+        '<label class="chk"><input type="checkbox" data-con="dia" data-nr="1"' + (CON.dia ? ' checked' : '') + '><span>Traer el diario (reemplaza las líneas actuales)</span></label>' +
+        '<div class="botones"><button class="btn" data-act="conTraer"' + (CON.ocupado ? ' disabled' : '') + '>' + (CON.ocupado ? 'Leyendo…' : 'Traer datos') + '</button></div>';
+    } else h += '<div class="botones"><button class="btn" data-act="conEmpresas">Cargar mis empresas</button></div>';
+  }
+  if (CON.msg.length) h += '<ul class="vals">' + CON.msg.map(function (t) { return '<li class="' + (/^(Error|Aviso)/.test(t) ? 'no' : 'ok') + '">' + esc(t) + '</li>'; }).join('') + '</ul>';
+  if (e.conexion) h += '<p class="mut">Último traspaso: ' + esc(e.conexion.empresa) + ', ejercicio ' + esc(e.conexion.anio) + ', ' + esc(String(e.conexion.fecha).slice(0, 16).replace('T', ' ')) + ' UTC.</p>';
+  return h + '</details>';
+}
+function conLeerCampos() {
+  var g = function (id) { var x = document.getElementById(id); return x ? x.value : ''; };
+  var c = conCfg(); if (g('conUrl')) c.url = g('conUrl').trim().replace(/\/+$/, ''); if (g('conKey')) c.key = g('conKey').trim(); if (g('conMail')) c.email = g('conMail').trim();
+  conGuardarCfg(c); return c;
+}
+
+/* ---------- Respaldo cifrado y subida a GitHub ---------- */
+function b64(u8) { var s = ''; for (var i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(s); }
+function deb64(t) { var s = atob(t), u = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; }
+function claveDe(pass, sal) {
+  return crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']).then(function (k) {
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: sal, iterations: 200000, hash: 'SHA-256' }, k, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  });
+}
+function cifrarTexto(texto, pass) {
+  var sal = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  return claveDe(pass, sal).then(function (k) { return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, k, new TextEncoder().encode(texto)); }).then(function (buf) {
+    return JSON.stringify({ app: 'auditoria-pa', cifrado: 'AES-GCM-256/PBKDF2-SHA256', v: 1, sal: b64(sal), iv: b64(iv), datos: b64(new Uint8Array(buf)) });
+  });
+}
+function descifrarTexto(json, pass) {
+  var o = JSON.parse(json);
+  if (!o.datos || !o.sal || !o.iv) return Promise.reject(new Error('formato'));
+  return claveDe(pass, deb64(o.sal)).then(function (k) { return crypto.subtle.decrypt({ name: 'AES-GCM', iv: deb64(o.iv) }, k, deb64(o.datos)); }).then(function (b) { return new TextDecoder().decode(b); }, function () { throw new Error('clave'); });
+}
+function respaldoTexto() { return JSON.stringify({ app: 'auditoria-pa', version: 1, exportado: new Date().toISOString(), estado: ESTADO }); }
+function cardRespaldoCif() {
+  var c = conCfg();
+  return '<section class="card"><h3>Respaldo cifrado</h3><p class="mut">El archivo se cifra con una clave que usted escribe (AES-256). Sin la clave nadie puede leerlo, ni siquiera en un repositorio. Si la olvida, no se puede recuperar.</p>' +
+    '<div class="botones col"><button class="btn sec" data-act="cifBajar">Descargar respaldo cifrado</button><button class="btn sec" data-act="cifGitHub">Subir respaldo cifrado a GitHub</button>' +
+    '<label class="btn sec">Importar respaldo cifrado<input type="file" accept=".json,.enc,application/json" data-act="subirCif" hidden></label></div>' +
+    '<p class="mut">GitHub: repositorio ' + esc(c.repo) + '. El token se pide cada vez y no se guarda; debe ser de acceso fino, solo a ese repositorio, con permiso de escritura de contenido.</p></section>';
+}
+function pedirClave(doble) {
+  var a = prompt('Clave del respaldo (mínimo 8 caracteres)'); if (a == null) return null;
+  if (a.length < 8) { aviso('La clave debe tener al menos 8 caracteres'); return null; }
+  if (doble) { var b = prompt('Repita la clave'); if (b !== a) { aviso('Las claves no coinciden'); return null; } }
+  return a;
+}
+function mezclarEstado(s) {
+  var n = 0;
+  Object.keys(s.empresas).forEach(function (id) {
+    if (ESTADO.empresas[id] && !confirm('El encargo "' + ((s.empresas[id].encargo || {}).nombre || id) + '" ya existe. ¿Reemplazarlo con el del respaldo?')) return;
+    ESTADO.empresas[id] = s.empresas[id]; n++;
+  });
+  if (s.auditor && !ESTADO.auditor.nombre) ESTADO.auditor = s.auditor;
+  guardar(); render(); aviso(n + ' encargo(s) importado(s)');
+}
+function nombreCif() { var d = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16); return 'Respaldo_Auditoria_' + d + '.enc.json'; }
+
+function clickCon(t, a, e) {
+  if (a === 'conLogin') {
+    var c = conLeerCampos(), pass = (document.getElementById('conPass') || {}).value || '';
+    if (!c.email || !pass) { aviso('Escriba el correo y la contraseña'); return true; }
+    CON.ocupado = true; CON.msg = ['Conectando…']; UI.conOpen = true; refrescar();
+    conIniciar(c.email, pass).catch(function (er) { CON.msg = ['Error: ' + er.message]; }).then(function () { CON.ocupado = false; refrescar(); });
+    return true;
+  }
+  if (a === 'conEmpresas') {
+    CON.ocupado = true; refrescar();
+    conGET('empresas?select=id,razon_social,nombre_comercial,ruc,contribuyente_itbms&order=razon_social.asc').then(function (l) { CON.emps = l; CON.sel = l.length ? l[0].id : ''; return conRol(); })
+      .catch(function (er) { CON.msg = ['Error: ' + er.message]; }).then(function () { CON.ocupado = false; refrescar(); });
+    return true;
+  }
+  if (a === 'conSalir') { conCerrar(); refrescar(); return true; }
+  if (a === 'conTraer') {
+    var anio = String(e.encargo.anio || '').trim(), fin = e.encargo.fechaCierre || (anio + '-12-31');
+    if (!/^\d{4}$/.test(anio)) { aviso('Escriba el ejercicio (año de cuatro cifras)'); return true; }
+    if (!CON.bal && !CON.dia) { aviso('Marque la balanza, el diario o ambos'); return true; }
+    if (CON.bal && e.cuentas.length && !confirm('La balanza actual (' + e.cuentas.length + ' cuentas) será reemplazada. Los ajustes y pruebas se conservan. ¿Continuar?')) return true;
+    CON.ocupado = true; CON.msg = ['Leyendo la app contable…']; UI.conOpen = true; refrescar();
+    conTraer(e, CON.sel, anio, fin, CON.bal, CON.dia).catch(function (er) { CON.msg = ['Error: ' + er.message]; }).then(function () { CON.ocupado = false; refrescar(); });
+    return true;
+  }
+  if (a === 'cifBajar') {
+    var k = pedirClave(true); if (!k) return true;
+    cifrarTexto(respaldoTexto(), k).then(function (j) { descargar(nombreCif(), j, 'application/json'); aviso('Respaldo cifrado descargado'); }).catch(function () { aviso('No se pudo cifrar en este navegador'); });
+    return true;
+  }
+  if (a === 'cifGitHub') {
+    var cfg = conCfg(), repo = prompt('Repositorio privado (usuario/repositorio)', cfg.repo); if (!repo) return true;
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { aviso('Escriba el repositorio como usuario/repositorio'); return true; }
+    var tok = prompt('Token de GitHub (no se guarda)'); if (!tok) return true;
+    var k2 = pedirClave(true); if (!k2) return true;
+    cfg.repo = repo; conGuardarCfg(cfg);
+    var ruta = 'auditoria/' + nombreCif();
+    cifrarTexto(respaldoTexto(), k2).then(function (j) {
+      return conFetch('https://api.github.com/repos/' + repo + '/contents/' + ruta, { method: 'PUT', headers: { Authorization: 'Bearer ' + tok.trim(), Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Respaldo cifrado de auditoría', content: btoa(unescape(encodeURIComponent(j))) }) }, 60000);
+    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.message || ('Error ' + r.status)); aviso('Subido a ' + repo + '/' + ruta); }); })
+      .catch(function (er) { aviso('No se pudo subir: ' + er.message); });
+    return true;
+  }
+  return false;
+}
+function changeCon(t) {
+  if (t.dataset.act === 'subirCif') {
+    var f = t.files[0]; if (!f) return true;
+    var rd = new FileReader();
+    rd.onload = function () {
+      var k = pedirClave(false); if (!k) return;
+      descifrarTexto(rd.result, k).then(function (txt) { var o = JSON.parse(txt), s = o.estado || o; if (!s.empresas) throw new Error('formato'); mezclarEstado(s); })
+        .catch(function (er) { aviso(er.message === 'clave' ? 'Clave incorrecta o archivo dañado' : 'El archivo no es un respaldo cifrado válido'); });
+    };
+    rd.readAsText(f); t.value = '';
+    return true;
+  }
+  if (!t.dataset.con) return false;
+  var d = t.dataset.con, e = ESTADO.actual ? emp() : null;
+  if (d === 'sel') CON.sel = t.value;
+  else if (d === 'bal') CON.bal = t.checked;
+  else if (d === 'dia') CON.dia = t.checked;
+  else if (d === 'anio' && e) { e.encargo.anio = t.value.trim(); guardar(); }
+  else if (d === 'fin' && e) { e.encargo.fechaCierre = t.value; guardar(); }
+  else if (d === 'url' || d === 'key' || d === 'email') conLeerCampos();
+  return true;
+}
+/* FIN DEL ARCHIVO conexion.js */
+
+</script>
+<script>
 /* app.js - Interfaz de la app de auditoría (módulos 1 a 9) */
 'use strict';
 
 var CLAVE = 'auditoria.pa.v1';
-var VERSION_APP = 'B3.0';
+var VERSION_APP = 'B4.0';
 var PASOS = [
   { n: 1, t: 'Encargo' }, { n: 2, t: 'Balanza' }, { n: 3, t: 'Planificación' }, { n: 4, t: 'Diario' }, { n: 5, t: 'Pruebas' }, { n: 6, t: 'Ajustes' },
   { n: 7, t: 'Balanza auditada' }, { n: 8, t: 'Estados' }, { n: 9, t: 'Cartas' }, { n: 10, t: 'Dictamen' }, { n: 11, t: 'Informe' }, { n: 12, t: 'Control' }, { n: 13, t: 'Exportar' }
@@ -2734,7 +3087,7 @@ function render() {
     var st = p.n <= 12 ? estadoModulo(res, p.n) : 'na';
     return '<button class="paso' + (ESTADO.paso === p.n ? ' act' : '') + '" data-act="paso" data-n="' + p.n + '"><i class="pt ' + st + '"></i>' + p.n + '. ' + p.t + '</button>';
   }).join('');
-  var vistas = { 1: vPaso1, 2: vPaso2, 3: vPaso3, 4: vDiario, 5: vPaso4, 6: vPaso5, 7: vPaso6, 8: vPaso7, 9: vCartas, 10: vPaso8, 11: vInforme, 12: vControl, 13: vPaso9 };
+  var vistas = { 1: vPaso1, 2: function (e, res) { return conVista(e) + vPaso2(e, res); }, 3: vPaso3, 4: vDiario, 5: vPaso4, 6: vPaso5, 7: vPaso6, 8: vPaso7, 9: vCartas, 10: vPaso8, 11: vInforme, 12: vControl, 13: function (e, res) { return vPaso9(e) + cardRespaldoCif(); } };
   vista.innerHTML = vistas[ESTADO.paso](e, res);
   pie.innerHTML = '<button class="btn sec" data-act="ant"' + (ESTADO.paso <= 1 ? ' disabled' : '') + '>← Anterior</button><button class="btn" data-act="sig"' + (ESTADO.paso >= 13 ? ' disabled' : '') + '>Siguiente →</button>';
   if (ESTADO.paso === 2) actualizarTotales();
@@ -2764,6 +3117,7 @@ function vInicio() {
   h += '<section class="card"><h2>Respaldo</h2><div class="botones"><button class="btn sec" data-act="respaldo">Descargar respaldo</button><label class="btn sec">Importar respaldo<input type="file" accept=".json,application/json" data-act="subirRespaldo" hidden></label></div>' +
     '<p class="mut">Los datos viven solo en este teléfono. Descargue un respaldo con frecuencia.</p></section>';
   h += cardPin();
+  h += cardRespaldoCif();
   h += cardInstalar();
   return h;
 }
@@ -3061,7 +3415,7 @@ function vPaso9(e) {
   return '<section class="card"><h2>13. Exportar y respaldo</h2><p class="mut">Los libros se generan en el teléfono. Los totales de las balanzas llevan fórmulas de Excel.</p>' +
     '<div class="botones col"><button class="btn" data-act="xlsx" data-m="todo">Libro de auditoría completo (Excel)</button><button class="btn sec" data-act="xlsx" data-m="prelim">Solo fase 1: estados no auditados y análisis</button><button class="btn sec" data-act="imprimir">Imprimir o guardar PDF de la pantalla actual</button></div></section>' +
     '<section class="card"><h3>Respaldo de datos</h3><div class="botones col"><button class="btn sec" data-act="respaldo">Descargar respaldo de todos los encargos</button><label class="btn sec">Importar respaldo<input type="file" accept=".json,application/json" data-act="subirRespaldo" hidden></label></div></section>' +
-    '<section class="card"><h3>Próximos bloques</h3><ul class="vals"><li>Bloque 4: conexión de solo lectura con la app contable y respaldos.</li></ul><p class="mut">Versión ' + VERSION_APP + '</p></section>';
+    '<section class="card"><h3>Estado del desarrollo</h3><ul class="vals"><li>Bloques 1 a 4 completos. Pruebe con un cliente real y avise los ajustes.</li></ul><p class="mut">Versión ' + VERSION_APP + '</p></section>';
 }
 
 /* ---------- Exportación a Excel ---------- */
@@ -3196,6 +3550,7 @@ function onClick(ev) {
   var a = t.dataset.act, e = ESTADO.actual ? emp() : null;
   if (t.tagName === 'INPUT' && t.type === 'file') return;
   if (clickLock(t, a) || clickInst(t, a)) return;
+  if (clickCon(t, a, e)) return;
   if (e && clickInforme(t, a, e)) return;
   if (clickExtra(t, a, e)) return;
   if (a === 'inicio') { ESTADO.paso = 0; guardar(); render(); }
@@ -3261,6 +3616,7 @@ function onClick(ev) {
 }
 function onChange(ev) {
   var t = ev.target;
+  if (changeCon(t)) return;
   if (changeExtra(t)) return;
   if (t.dataset.act === 'subirRespaldo') {
     var f = t.files[0]; if (!f) return;
@@ -3302,6 +3658,7 @@ function onChange(ev) {
 function onToggle(ev) {
   var d = ev.target;
   if (d.tagName === 'DETAILS' && d.dataset.rub) UI.abiertos[d.dataset.rub] = d.open;
+  else if (d.tagName === 'DETAILS' && d.dataset.conbox) UI.conOpen = d.open;
   else if (d.tagName === 'DETAILS' && d.dataset.alerta) UI.abiertos['A' + d.dataset.alerta] = d.open;
 }
 function iniciar() {

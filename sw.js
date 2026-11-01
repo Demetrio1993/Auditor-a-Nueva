@@ -1,5 +1,5 @@
 /* sw.js - Red primero (máx. 3 s) y, si no hay internet, lo guardado. Sube VERSION al publicar cambios. */
-var VERSION = 'auditoria-B3.0';
+var VERSION = 'auditoria-B4.0';
 var ARCHIVOS = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
@@ -14,6 +14,8 @@ self.addEventListener('activate', function (e) {
 });
 self.addEventListener('fetch', function (e) {
   if (e.request.method !== 'GET') return;
+  /* Solo archivos de esta app: nunca se guardan ni se interceptan las consultas a la base de datos (datos del cliente) */
+  if (new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(caches.open(VERSION).then(function (c) {
     var red = new Promise(function (ok, no) {
       var t = setTimeout(function () { no(new Error('lento')); }, 3000);
