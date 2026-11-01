@@ -3015,7 +3015,7 @@ function clickCon(t, a, e) {
 }
 var CLAVE_GL = 'auditoria.pa.gitlab';
 function glError(st, msg) {
-  var m = { 400: 'GitLab no encontró la rama main o rechazó el nombre del archivo.', 401: 'El token no es válido o venció.', 403: 'El token no tiene permiso de escritura (necesita write_repository).', 404: 'GitLab no encuentra el proyecto o el token no tiene acceso a él.' }[st];
+  var m = { 400: 'GitLab no encontró la rama main o rechazó el nombre del archivo.', 401: 'El token no es válido o venció.', 403: 'El token no tiene permiso (debe tener el alcance api y ser de un usuario con rol Developer o Maintainer en el proyecto).', 404: 'GitLab no encuentra el proyecto o el token no tiene acceso a él.' }[st];
   return (m || ('GitLab respondió con error ' + st + '.')) + (msg ? ' (' + (typeof msg === 'string' ? msg : JSON.stringify(msg)) + ')' : '');
 }
 /* Espejo del respaldo cifrado en GitLab (proyecto privado, rama main). El token no se guarda. */
@@ -3025,7 +3025,7 @@ function cifGitLab() {
   if (!proy) return;
   proy = proy.trim();
   if (!/^[\w.-]+(\/[\w.-]+)+$/.test(proy)) { aviso('Escriba el proyecto como grupo/repositorio'); return; }
-  var tok = prompt('Token de GitLab (no se guarda). Necesita permiso write_repository');
+  var tok = prompt('Token de GitLab (no se guarda). Debe tener el permiso api');
   if (!tok) return;
   var k = pedirClave(true);
   if (!k) return;
