@@ -114,6 +114,11 @@ details.al > summary { grid-template-columns: auto 1fr auto; }
 .bloq-caja { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 10px; text-align: center; }
 .bloq-caja input { font-size: 24px; text-align: center; letter-spacing: 6px; padding: 10px; border: 1px solid var(--lin); border-radius: 10px; background: var(--bg); color: var(--tx); }
 
+.mx { border: 1px solid var(--lin); border-radius: 10px; padding: 8px 12px; margin: 10px 0; background: var(--bg); }
+.mx p { margin: 4px 0; font-size: 14px; } .mx-t { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.txt { white-space: pre-wrap; font-size: 14px; } .soloimp { display: none; white-space: pre-wrap; }
+@media print { .soloimp { display: block; } .parte { break-inside: auto; } .mx { break-inside: avoid; } }
+
 </style>
 </head>
 <body>
@@ -1965,7 +1970,7 @@ function clickInst(t, a) {
 
 </script>
 <script>
-/* vistas2.js - Módulos 4 (diario), 9 (cartas) y 11 (control), validación por módulo y exportación extra */
+/* vistas2.js - Módulos 4 (diario), 9 (cartas) y 12 (control), validación por módulo y exportación extra */
 'use strict';
 
 function hoyIso() { var d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
@@ -1984,6 +1989,10 @@ function asegurarEmp(e) {
   if (!e.cartas.txt) e.cartas.txt = {};
   if (!e.cartas.obs) e.cartas.obs = [];
   if (!e.cartas.firmada) e.cartas.firmada = {};
+  if (!e.informe) e.informe = {};
+  if (!e.informe.rev) e.informe.rev = {};
+  if (!e.informe.nv) e.informe.nv = {};
+  if (e.informe.coment == null) e.informe.coment = '';
   if (!e.versiones) e.versiones = [];
   if (!e.horas) e.horas = [];
   if (!e.plan) e.plan = {};
@@ -2007,8 +2016,10 @@ function valApp(e) {
   var f = e.cartas.firmada;
   n[9] = [{ ok: !!f.comp, msg: 'Carta de compromiso firmada' }, { ok: !!f.repr, msg: 'Carta de representación firmada' }, { ok: !!f.reco, msg: 'Carta de recomendaciones entregada' }];
   n[10] = v[8];
-  n[11] = [{ ok: e.versiones.length > 0, msg: 'Al menos una versión guardada de los papeles' }, { ok: totalHoras(e) > 0, msg: 'Horas del encargo registradas' }];
-  n[12] = [];
+  var rv = e.informe.rev;
+  n[11] = [[2, 'Resumen ejecutivo'], [3, 'Matriz de riesgos'], [4, 'Guía de pruebas'], [5, 'Control interno'], [7, 'Otros temas']].map(function (x) { return { ok: !!rv['p' + x[0]], msg: 'Parte ' + x[0] + ' (' + x[1] + ') revisada' }; });
+  n[12] = [{ ok: e.versiones.length > 0, msg: 'Al menos una versión guardada de los papeles' }, { ok: totalHoras(e) > 0, msg: 'Horas del encargo registradas' }];
+  n[13] = [];
   return n;
 }
 
@@ -2090,7 +2101,7 @@ function resumenVersion(datos) {
 }
 function kbUsados() { try { return Math.round((localStorage.getItem(CLAVE) || '').length / 1024); } catch (x) { return 0; } }
 function vControl(e, res) {
-  var h = '<section class="card"><h2>11. Control del encargo</h2><p class="mut">Versiones de los papeles de trabajo y registro de horas. Guarde una versión antes de enviar un borrador al cliente y otra al emitir el informe.</p>' + listaVal(res, 11) + '</section>';
+  var h = '<section class="card"><h2>12. Control del encargo</h2><p class="mut">Versiones de los papeles de trabajo y registro de horas. Guarde una versión antes de enviar un borrador al cliente y otra al emitir el informe.</p>' + listaVal(res, 11) + '</section>';
   h += '<section class="card"><h3>Versiones de los papeles</h3><label class="campo"><span>Etiqueta</span><input id="verEtq" placeholder="Ej.: Borrador enviado al cliente"></label><div class="botones"><button class="btn" data-act="guardarVersion">Guardar versión</button></div>' +
     '<p class="mut">Datos guardados en este teléfono: ' + kbUsados() + ' KB de unos 5,000 KB que permite el navegador. Se conservan hasta 6 versiones; descargue un respaldo si se acerca al límite.</p>';
   if (!e.versiones.length) h += '<p class="mut">Todavía no hay versiones.</p>';
@@ -2219,14 +2230,399 @@ function hojasExtra(e) {
 
 </script>
 <script>
+/* informe.js - Bloque 3: informe de auditoría en 7 partes (módulo 11) */
+'use strict';
+
+var PARTES_INFORME = [
+  { n: 1, t: 'Estados financieros auditados y notas' },
+  { n: 2, t: 'Resumen ejecutivo' },
+  { n: 3, t: 'Matriz de riesgos' },
+  { n: 4, t: 'Guía de ejecución de pruebas' },
+  { n: 5, t: 'Control interno' },
+  { n: 6, t: 'Certificación y dictamen' },
+  { n: 7, t: 'Otros temas' }
+];
+
+/* Riesgo inherente de partida y texto del riesgo por rubro (criterio del auditor: se puede cambiar en la matriz) */
+var RIESGO_RUBRO = {
+  EFE: ['Alto', 'Fondos no registrados o partidas conciliatorias sin sustento; mezcla de fondos del negocio y personales'],
+  CXC: ['Medio', 'Cuentas por cobrar inexistentes, sin cobro posible o sin estimación de incobrables'],
+  OCC: ['Medio', 'Préstamos o anticipos a terceros o al propietario sin soporte ni condiciones'],
+  INV: ['Medio', 'Existencias que no están, están dañadas u obsoletas, o valoradas por encima de su costo'],
+  ANT: ['Bajo', 'Gastos pagados por anticipado sin amortizar o ya consumidos'],
+  IMPA: ['Medio', 'Créditos o anticipos de impuestos que no son recuperables o sin comprobante'],
+  PPE: ['Bajo', 'Activos que no existen, no son del negocio o gastos capitalizados sin criterio'],
+  DEPA: ['Bajo', 'Depreciación mal calculada o con vidas útiles sin sustento'],
+  INT: ['Bajo', 'Intangibles sin derecho comprobable o sin amortizar'],
+  OANC: ['Bajo', 'Depósitos y otros activos sin soporte'],
+  CXP: ['Medio', 'Deudas no registradas (corte) o facturas duplicadas'],
+  ACR: ['Medio', 'Gastos devengados sin registrar o provisiones sin base'],
+  LAB: ['Medio', 'Cargas sociales y prestaciones laborales sin registrar o mal calculadas'],
+  IMPP: ['Medio', 'Impuestos por pagar subestimados o declaraciones no presentadas'],
+  PRC: ['Medio', 'Deuda no registrada o sin los intereses devengados'],
+  CXPP: ['Medio', 'Saldos con el propietario sin soporte ni clasificación correcta'],
+  PRL: ['Medio', 'Deuda a largo plazo mal clasificada o con cláusulas incumplidas'],
+  CAP: ['Bajo', 'Aportes sin soporte o mal clasificados'],
+  URE: ['Bajo', 'Saldo inicial que no coincide con los estados del año anterior'],
+  RET: ['Medio', 'Retiros del propietario no identificados o mezclados con gastos del negocio'],
+  ING: ['Alto', 'Ingresos no registrados, registrados antes de ganarse o fuera de período (riesgo presunto de fraude, NIA 240)'],
+  COS: ['Medio', 'Costos omitidos o fuera de período que inflan el margen'],
+  GOP: ['Medio', 'Gastos sin soporte, de naturaleza personal o fuera de período'],
+  GDEP: ['Bajo', 'Gasto de depreciación que no concuerda con el auxiliar de activos'],
+  OIN: ['Bajo', 'Otros ingresos mal clasificados o sin soporte'],
+  GFI: ['Bajo', 'Intereses y comisiones no conciliados con los estados de los acreedores'],
+  GISR: ['Medio', 'Impuesto sobre la renta mal estimado o no registrado']
+};
+
+/* Criterios de selección por rubro para la guía de pruebas */
+var SELECCION_RUBRO = {
+  EFE: 'Todas las cuentas bancarias y la caja. Conciliación al cierre; partidas conciliatorias mayores a la materialidad de ejecución; cheques y transferencias de los últimos 10 días del año y los primeros 10 del siguiente.',
+  CXC: 'Todos los saldos mayores a la ejecución; muestra al azar del resto; saldos más antiguos y los de partes relacionadas; cobros posteriores para los no confirmados.',
+  OCC: 'Todos los saldos; examine el soporte y la fecha de cobro esperada.',
+  INV: 'Artículos de mayor valor y de movimiento lento; conteo físico en las fechas más cercanas al cierre y conciliación con el kárdex; corte en las últimas entradas y salidas.',
+  ANT: 'Partidas mayores a la ejecución; recalcule la amortización.',
+  IMPA: 'Todos los comprobantes de anticipos y créditos; contraste con la declaración y el recibo de pago.',
+  PPE: 'Adiciones del año (todas las mayores a la ejecución); bajas; inspección física de los activos más valiosos; contraste con facturas y títulos.',
+  DEPA: 'Recálculo con vida útil y método; contraste con el auxiliar de activos.',
+  INT: 'Contratos o registros que dan el derecho; recálculo de amortización.',
+  OANC: 'Todas las partidas con su contrato o recibo.',
+  CXP: 'Proveedores con saldo mayor a la ejecución; búsqueda de pasivos no registrados con los pagos y facturas posteriores al cierre; confirmaciones o estados de cuenta.',
+  ACR: 'Recálculo de cada provisión y contraste con facturas o pagos posteriores.',
+  LAB: 'Recálculo de planilla, seguro social, seguro educativo, décimo tercer mes y vacaciones; contraste con los pagos a la Caja de Seguro Social.',
+  IMPP: 'Declaraciones, recibos de pago y estado de cuenta tributario; recálculo del impuesto.',
+  PRC: 'Contrato, tabla de amortización y confirmación o estado del acreedor.',
+  CXPP: 'Todos los movimientos del año con su soporte; clasifique aportes y préstamos del propietario.',
+  PRL: 'Contrato, tabla de amortización, parte corriente y confirmación del acreedor.',
+  CAP: 'Aportes del año con comprobantes; conciliación del saldo inicial con el año anterior.',
+  URE: 'Concilie el saldo inicial con los estados del año anterior y los retiros acordados.',
+  RET: 'Todos los retiros del año con su comprobante; revise que no se hayan registrado como gasto.',
+  ING: 'Secuencia completa de facturas del período; muestra de facturas con su orden, entrega o servicio y cobro; corte de las últimas y primeras 10 operaciones; conciliación con las ventas declaradas.',
+  COS: 'Muestra de facturas de compras y costos con su corte; recálculo del margen y análisis de variaciones.',
+  GOP: 'Todos los gastos mayores a la ejecución; muestra al azar del resto; gastos redondos, repetidos o con proveedor nuevo; corte de fin de año.',
+  GDEP: 'Concilie con el cálculo del auxiliar de activos.',
+  OIN: 'Todas las partidas con su soporte.',
+  GFI: 'Concilie con los estados de cuenta de los acreedores.',
+  GISR: 'Recalcule el impuesto con la tabla vigente y concilie con la declaración.'
+};
+
+/* Controles que se recomiendan según el rubro, cuando el riesgo es medio o alto */
+var CONTROL_RUBRO = {
+  EFE: ['Efectivo y bancos', 'Hacer la conciliación bancaria cada mes, firmada por el propietario, y mantener cuentas bancarias separadas para el negocio y para uso personal.'],
+  CXC: ['Cuentas por cobrar', 'Preparar cada mes un informe de antigüedad de saldos y definir una política para estimar los incobrables.'],
+  INV: ['Inventarios', 'Hacer conteos físicos periódicos, conciliarlos con el registro y documentar las mermas y las bajas.'],
+  PPE: ['Propiedad, planta y equipo', 'Llevar un auxiliar de activos con fecha, costo, vida útil y ubicación, y revisarlo cada año.'],
+  CXP: ['Compras y cuentas por pagar', 'Pagar solo contra factura aprobada y conciliar cada mes los saldos con los estados de cuenta de los proveedores.'],
+  LAB: ['Planilla y cargas sociales', 'Conciliar cada mes la planilla con los pagos a la Caja de Seguro Social y guardar los comprobantes.'],
+  IMPP: ['Impuestos', 'Llevar un calendario de obligaciones fiscales y archivar las declaraciones con su comprobante de pago.'],
+  RET: ['Retiros del propietario', 'Registrar los retiros del propietario en la cuenta de retiros, con comprobante, y no mezclarlos con gastos del negocio.'],
+  ING: ['Ventas y facturación', 'Controlar la numeración de facturas, documentar las anuladas y conciliar cada mes las ventas con el reporte de facturación electrónica.'],
+  GOP: ['Gastos', 'Exigir un comprobante por cada gasto y marcar los gastos personales para excluirlos de la contabilidad del negocio.']
+};
+
+function nivelMax(a, b) { var o = { Bajo: 1, Medio: 2, Alto: 3 }; return (o[b] || 0) > (o[a] || 0) ? b : a; }
+function chipNivel(n) { return '<span class="nv n-' + String(n).toLowerCase() + '">' + esc(n) + '</span>'; }
+
+function ctxInforme(e) {
+  var pre = estados(e.cuentas, e.ajustes, 'prelim'), aud = estados(e.cuentas, e.ajustes, 'audit');
+  var mat = materialidad(e, pre), mapa = ajustesAplicados(e.ajustes);
+  var an = e.diario.filas.length ? analizarDiario(e) : null;
+  return {
+    pre: pre, aud: aud, mat: mat, mapa: mapa, an: an, rs: an ? resumenAlertas(e, an) : null,
+    prP: porRubro(e.cuentas, {}, 'prelim'), prA: porRubro(e.cuentas, mapa, 'audit'),
+    op: opinionSugerida(e), rubros: rubrosConSaldo(e), rz: razones(aud)
+  };
+}
+function rzVal(c, t) { var r = c.rz.filter(function (x) { return x.t === t; })[0]; return r ? r.v : null; }
+
+/* ---------- Parte 3: matriz de riesgos ---------- */
+function matrizRiesgos(e) {
+  var c = ctxInforme(e), out = [], nv = (e.informe && e.informe.nv) || {};
+  function add(k, area, riesgo, nivel, evid) { out.push({ k: k, area: area, riesgo: riesgo, nivel: nv[k] || nivel, nivelAuto: nivel, evid: evid }); }
+  c.rubros.forEach(function (r) {
+    var base = RIESGO_RUBRO[r.id]; if (!base) return;
+    var p = (e.programa && e.programa[r.id]) || {}, pg = progresoRubro(e, r.id), conc = conclusionSugerida(e, r.id);
+    var nivel = p.riesgo || base[0], ev = [];
+    var ref = PROGRAMA[r.id] ? PROGRAMA[r.id].ref : '';
+    ev.push('Papel ' + ref + ': ' + pg.proc + ' de ' + pg.total + ' procedimientos');
+    var sp = p.saldoProbado;
+    if (sp !== undefined && sp !== '' && sp !== null) {
+      var dif = r2(sp - c.prP.cierre[r.id]);
+      ev.push(Math.abs(dif) >= 0.005 ? 'diferencia contra libros B/. ' + fmt(dif) : 'saldo probado igual al de libros');
+      if (Math.abs(dif) >= c.mat.ejec && c.mat.ejec > 0) nivel = 'Alto'; else if (Math.abs(dif) >= c.mat.triv && c.mat.triv > 0) nivel = nivelMax(nivel, 'Medio');
+    }
+    if (['Con salvedad', 'Incorrecto', 'Sin evidencia suficiente'].indexOf(conc) >= 0) { nivel = 'Alto'; ev.push('conclusión: ' + conc.toLowerCase()); }
+    else ev.push('conclusión: ' + conc.toLowerCase());
+    if (p.hallazgo && String(p.hallazgo).trim()) ev.push('hallazgo: ' + String(p.hallazgo).trim().slice(0, 140));
+    ev.push('saldo auditado B/. ' + fmt(Math.abs(c.prA.cierre[r.id])));
+    add('r_' + r.id, r.nombre, base[1], nivel, ev.join('; ') + '.');
+  });
+  /* Riesgos que no dependen de un rubro */
+  var ex = (c.an && c.rs) ? c.rs : null;
+  add('g_dir', 'Elusión de controles por la dirección', 'Asientos manuales o de cierre registrados sin autorización para cambiar resultados (riesgo presunto, NIA 240)',
+    ex ? (ex.porNivel.Alto > 0 || ex.hallazgos > 0 ? 'Alto' : 'Medio') : 'Alto',
+    ex ? 'Analítica del diario: ' + ex.total + ' alertas, ' + ex.porNivel.Alto + ' de nivel alto, ' + ex.hallazgos + ' marcadas como hallazgo, ' + ex.pendientes + ' pendientes de revisar.' : 'Sin diario cargado: no se pudo aplicar la analítica de asientos. Es una limitación del trabajo.');
+  var rc = rzVal(c, 'Razón corriente'), n = c.aud.n;
+  var indicios = [];
+  if (rc !== null && rc < 1) indicios.push('razón corriente de ' + rc.toFixed(2));
+  if (n.ni < 0) indicios.push('pérdida del ejercicio de B/. ' + fmt(Math.abs(n.ni)));
+  if (n.patrimonio < 0) indicios.push('patrimonio negativo');
+  add('g_fun', 'Empresa en funcionamiento', 'Que el negocio no pueda pagar sus deudas ni continuar su actividad durante los 12 meses siguientes (NIA 570)',
+    indicios.length >= 2 ? 'Alto' : indicios.length === 1 ? 'Medio' : 'Bajo',
+    indicios.length ? 'Indicios: ' + indicios.join('; ') + '.' : 'Sin indicios cuantitativos en los estados auditados.' + (rc !== null ? ' Razón corriente ' + rc.toFixed(2) + '.' : ''));
+  var dif = diferenciasNoCorregidas(e, c.mat);
+  if (dif.nivel !== 'ninguna') add('g_dnc', 'Diferencias no corregidas', 'Que las incorrecciones que el propietario no aceptó corregir afecten los estados (NIA 450)', dif.nivel === 'material' ? 'Alto' : dif.nivel === 'cercana' ? 'Medio' : 'Bajo',
+    'La mayor diferencia es B/. ' + fmt(dif.mayor) + ' frente a una materialidad de B/. ' + fmt(c.mat.mat) + ' y una ejecución de B/. ' + fmt(c.mat.ejec) + ' (' + dif.nivel + ').');
+  add('g_trib', 'Cumplimiento tributario', 'Impuestos mal calculados o declaraciones no presentadas' + (e.encargo.itbms === 'Sí' ? ', incluido el ITBMS' : ''), 'Medio',
+    'Estimado del ISR sobre la utilidad antes de impuesto auditada (B/. ' + fmt(n.uai) + '): B/. ' + fmt(isrPN(n.uai)) + ' frente a un gasto registrado de B/. ' + fmt(Math.abs(c.prA.cierre.GISR || 0)) + '. El estimado es una referencia, no sustituye la declaración.');
+  /* Hallazgos del diario, uno por prueba */
+  if (c.an) {
+    var vistos = {};
+    c.an.alertas.forEach(function (al) {
+      if (revisionDe(e, al.k).estado !== 'Hallazgo' || vistos[al.p]) return;
+      vistos[al.p] = 1;
+      var pr = PRUEBAS_DIARIO.filter(function (x) { return x.id === al.p; })[0], rec = RECOMENDACION_PRUEBA[al.p];
+      var cuantas = c.an.alertas.filter(function (z) { return z.p === al.p && revisionDe(e, z.k).estado === 'Hallazgo'; }).length;
+      add('d_' + al.p, rec[0], pr.t + ': ' + al.titulo, al.nivel, cuantas + ' alerta(s) marcada(s) como hallazgo en la prueba ' + al.p + '.');
+    });
+  }
+  var o = { Alto: 0, Medio: 1, Bajo: 2 };
+  out.sort(function (a, b) { return o[a.nivel] - o[b.nivel]; });
+  return out;
+}
+
+/* ---------- Parte 4: guía de ejecución de pruebas y muestras ---------- */
+var FACTOR_CONFIANZA = { Alto: 3.0, Medio: 2.3, Bajo: 1.6 };
+function guiaPruebas(e) {
+  var c = ctxInforme(e), mx = matrizRiesgos(e), nvl = {};
+  mx.forEach(function (m) { if (m.k.indexOf('r_') === 0) nvl[m.k.slice(2)] = m.nivel; });
+  var cuentaPor = {}, lineas = {};
+  e.cuentas.forEach(function (x) { cuentaPor[x.cod] = x; });
+  (e.diario.filas || []).forEach(function (f) { var r = cuentaPor[f.cod] && cuentaPor[f.cod].rubro; if (r) lineas[r] = (lineas[r] || 0) + 1; });
+  var out = [], te = c.mat.ejec;
+  c.rubros.forEach(function (r) {
+    var b = PROGRAMA[r.id]; if (!b) return;
+    var saldo = Math.abs(c.prA.cierre[r.id] || 0), nivel = nvl[r.id] || 'Medio', F = FACTOR_CONFIANZA[nivel];
+    var nc = e.cuentas.filter(function (x) { return x.rubro === r.id; }).length;
+    var pobl = lineas[r.id] || 0, n = null, interv = null, texto;
+    if (c.mat.triv > 0 && saldo < c.mat.triv) texto = 'Saldo menor al umbral de trivialidad (B/. ' + fmt(c.mat.triv) + '): bastan procedimientos analíticos.';
+    else if (te > 0) {
+      n = Math.max(1, Math.ceil(saldo * F / te)); interv = r2(saldo / n);
+      if (pobl && n >= pobl) texto = 'La muestra calculada (' + n + ') alcanza o supera las ' + pobl + ' líneas del diario de este rubro: examine el 100 %.';
+      else texto = 'Muestra de ' + n + ' partidas con selección por unidad monetaria (intervalo de B/. ' + fmt(interv) + '). Toda partida mayor al intervalo se examina completa.' + (pobl ? '' : ' Si el rubro tiene menos partidas que la muestra, examínelas todas.');
+    } else texto = 'Defina la materialidad en el módulo 3 para calcular la muestra.';
+    out.push({ id: r.id, ref: b.ref, rubro: r.nombre, saldo: r2(saldo), nivel: nivel, factor: F, cuentas: nc, lineas: pobl, clave: te, n: n, interv: interv, texto: texto, criterio: SELECCION_RUBRO[r.id] || 'Seleccione partidas clave y una muestra al azar del resto.', docs: b.documentos.join('; '), aserciones: b.aserciones });
+  });
+  return { filas: out, mat: c.mat };
+}
+
+/* ---------- Parte 5: recomendaciones de control interno ---------- */
+function recomendacionesControl(e) {
+  var mx = matrizRiesgos(e), out = observacionesSugeridas(e).map(function (o) { return { area: o.area, obs: o.obs, riesgo: o.riesgo, rec: o.rec, origen: 'Hallazgo o ajuste' }; });
+  mx.forEach(function (m) {
+    if (m.k.indexOf('r_') !== 0 || m.nivel === 'Bajo') return;
+    var r = CONTROL_RUBRO[m.k.slice(2)]; if (!r) return;
+    out.push({ area: r[0], obs: 'Riesgo ' + m.nivel.toLowerCase() + ' identificado en la auditoría: ' + m.riesgo + '.', riesgo: m.nivel, rec: r[1], origen: 'Riesgo del rubro' });
+  });
+  var tieneRet = e.cuentas.some(function (x) { return (x.rubro === 'RET' || x.rubro === 'CXPP') && Math.abs(acum(x)) >= 0.005; });
+  if (tieneRet || !out.length) out.push({ area: 'Negocio del propietario', obs: 'El negocio es de una sola persona y los fondos del dueño y del negocio pueden confundirse.', riesgo: 'Medio', rec: 'Usar cuentas separadas, sacar dinero solo mediante retiros registrados y firmar cada mes la conciliación.', origen: 'Característica del encargo' });
+  out.push({ area: 'Respaldo de la información', obs: 'Los libros contables y los soportes dependen de pocos medios de almacenamiento.', riesgo: 'Bajo', rec: 'Guardar cada mes una copia de los libros y de las facturas, en la nube o en otro dispositivo.', origen: 'Práctica general' });
+  var vistos = {}, res = [];
+  out.forEach(function (o) { var k = o.area + '|' + o.rec; if (!vistos[k]) { vistos[k] = 1; res.push(o); } });
+  var ord = { Alto: 0, Medio: 1, Bajo: 2 };
+  res.sort(function (a, b) { return (ord[a.riesgo] == null ? 1 : ord[a.riesgo]) - (ord[b.riesgo] == null ? 1 : ord[b.riesgo]); });
+  return res;
+}
+
+/* ---------- Parte 7: otros temas de auditoría ---------- */
+function otrosTemas(e) {
+  var c = ctxInforme(e), n = c.aud.n, out = [], ex = c.rs;
+  function add(t, nia, nivel, txt) { out.push({ t: t, nia: nia, nivel: nivel, txt: txt }); }
+  add('Fraude y elusión de controles', 'NIA 240', ex && (ex.porNivel.Alto || ex.hallazgos) ? 'Alto' : 'Medio',
+    'Se presume riesgo de fraude en el reconocimiento de ingresos y en la elusión de controles por la dirección. ' + (ex ? 'La analítica del diario generó ' + ex.total + ' alertas: ' + ex.hallazgos + ' son hallazgos, ' + ex.sinProblema + ' se revisaron sin problema y ' + ex.pendientes + ' siguen pendientes.' : 'No se cargó el diario; esa prueba no se pudo aplicar.') + ' Al ser un negocio de un solo dueño, la separación de funciones es limitada; compense con pruebas de corte, secuencia de facturas y confirmaciones con terceros.');
+  var rc = rzVal(c, 'Razón corriente'), ct = r2(n.ac - n.pc);
+  add('Empresa en funcionamiento', 'NIA 570', (rc !== null && rc < 1) || n.ni < 0 || n.patrimonio < 0 ? 'Alto' : 'Bajo',
+    'Razón corriente: ' + (rc === null ? 'n/d' : rc.toFixed(2)) + '; capital de trabajo: B/. ' + fmt(ct) + '; utilidad neta auditada: B/. ' + fmt(n.ni) + '; patrimonio: B/. ' + fmt(n.patrimonio) + '. ' + ((rc !== null && rc < 1) || n.ni < 0 || n.patrimonio < 0 ? 'Hay indicios que obligan a evaluar el plan del propietario para cubrir sus deudas y, si hay duda importante, a revelarla o modificar la opinión.' : 'No hay indicios cuantitativos que cuestionen la continuidad. Confirme además que el propietario no planea cerrar el negocio.'));
+  var ret = Math.abs(c.prA.cierre.RET || 0), cxpp = Math.abs(c.prA.cierre.CXPP || 0), cap = Math.abs(c.prA.cierre.CAP || 0);
+  add('Partes relacionadas', 'NIA 550', ret + cxpp > c.mat.mat && c.mat.mat > 0 ? 'Medio' : 'Bajo',
+    'El propietario es la parte relacionada. Retiros del año: B/. ' + fmt(ret) + '; cuenta por pagar al propietario: B/. ' + fmt(cxpp) + '; capital: B/. ' + fmt(cap) + '. Confirme que todas las operaciones entre el dueño y el negocio están registradas y reveladas en las notas, y que ningún gasto personal está en los gastos del negocio.');
+  var isr = isrPN(n.uai), regI = Math.abs(c.prA.cierre.GISR || 0);
+  var tx = 'Impuesto sobre la renta estimado con la tabla de persona natural sobre una utilidad antes de impuesto de B/. ' + fmt(n.uai) + ': B/. ' + fmt(isr) + '. Gasto de ISR registrado: B/. ' + fmt(regI) + (Math.abs(isr - regI) >= (c.mat.triv || 0) && Math.abs(isr - regI) >= 0.005 ? ', con una diferencia de B/. ' + fmt(r2(isr - regI)) + ' que debe explicarse.' : '.') + ' Es un cálculo de referencia: la renta se determina con la declaración y sus deducciones.';
+  if (e.encargo.itbms !== 'Sí' && c.aud.n.ing > 36000) tx += ' Los ingresos superan B/. 36,000, cifra que la DGI menciona como referencia para declarar el ITBMS. Confirme con la norma vigente que el negocio no está obligado a inscribirse.';
+  add('Cumplimiento de leyes y reglamentos', 'NIA 250', 'Medio', tx + ' Revise también seguro social, seguro educativo y aviso de operación.');
+  var ch = (e.dictamen && e.dictamen.check) || {};
+  add('Hechos posteriores', 'NIA 560', ch.c1 ? 'Bajo' : 'Medio', ch.c1 ? 'Revisados hasta la fecha del informe según el módulo 10.' : 'Pendiente: revise los cobros, pagos, asientos y acuerdos posteriores al cierre hasta la fecha del informe y marque el punto en el módulo 10.');
+  add('Estimaciones contables', 'NIA 540', 'Medio',
+    'Depreciación (vidas útiles y método), estimación de incobrables' + (Math.abs(c.prA.cierre.CXC || 0) >= 0.005 ? ' sobre cuentas por cobrar de B/. ' + fmt(Math.abs(c.prA.cierre.CXC)) : '') + ' y provisiones laborales. Pruebe que el método es razonable y se aplica igual que el año anterior.');
+  var ini = Math.abs(c.pre.n.activos) > 0 || e.cuentas.some(function (x) { return Math.abs(Number(x.si) || 0) >= 0.005; });
+  add('Saldos iniciales', 'NIA 510', ini ? 'Medio' : 'Bajo', ini ? 'Concilie los saldos iniciales con los estados financieros del año anterior. Si no fueron auditados, aplique procedimientos adicionales y evalúe el efecto sobre la opinión.' : 'No hay saldos iniciales registrados.');
+  add('Comunicación con los encargados del gobierno', 'NIA 260', 'Bajo', 'El propietario es quien dirige y gobierna el negocio. Comunique por escrito el alcance, el calendario, los hallazgos importantes y las diferencias no corregidas; la carta de recomendaciones del módulo 9 cumple parte de esa comunicación.');
+  var pc = rzVal(c, 'Rotación de cuentas por cobrar'), mo = rzVal(c, 'Margen operativo');
+  var oportun = [];
+  if (n.uai > 11000) oportun.push('La utilidad está sobre el tramo exento del ISR (B/. 11,000): revise que todos los gastos deducibles estén documentados y que la depreciación se tome conforme a la norma fiscal.');
+  if (pc !== null && pc > 0 && 365 / pc > 60) oportun.push('Cobro en promedio cada ' + Math.round(365 / pc) + ' días: una política de crédito y de cobranza liberaría efectivo.');
+  if (rc !== null && rc < 1) oportun.push('Capital de trabajo negativo: renegocie plazos de pago o convierta deuda de corto plazo a largo plazo.');
+  if (mo !== null && mo < 0.1 && n.ing > 0) oportun.push('Margen operativo de ' + (mo * 100).toFixed(1) + ' %: analice los gastos de operación de mayor monto.');
+  oportun.push('Separar las finanzas personales de las del negocio facilita las declaraciones y reduce el riesgo de que se rechacen gastos.');
+  add('Optimización fiscal y financiera', 'Observaciones', 'Bajo', oportun.join(' ') + ' Son sugerencias para conversar con el propietario; valide cada una contra la ley fiscal vigente antes de aplicarla.');
+  return out;
+}
+
+/* ---------- Parte 2: resumen ejecutivo ---------- */
+function resumenEjecutivo(e) {
+  var c = ctxInforme(e), n = c.aud.n, p = c.pre.n, mx = matrizRiesgos(e), dif = diferenciasNoCorregidas(e, c.mat);
+  var nom = e.encargo.nombre || '[Nombre del negocio]';
+  var act = (e.ajustes || []).filter(function (a) { return a.estado === 'Aceptado'; });
+  var par = [];
+  par.push('Auditamos los estados financieros de ' + nom + ' al ' + fechaLarga(e.encargo.fechaCierre) + ', bajo ' + (e.encargo.marco || 'NIIF para las PYMES') + ' y las NIA. Los ingresos fueron de B/. ' + fmt(n.ing) + ' y la utilidad neta auditada de B/. ' + fmt(n.ni) + ', contra B/. ' + fmt(p.ni) + ' en los libros (cambio de B/. ' + fmt(r2(n.ni - p.ni)) + ' por ' + act.length + ' ajuste(s) aceptado(s)). Activos: B/. ' + fmt(n.activos) + '; pasivos: B/. ' + fmt(n.pasivos) + '; patrimonio: B/. ' + fmt(n.patrimonio) + '.');
+  par.push('Materialidad de B/. ' + fmt(c.mat.mat) + ' (' + c.mat.pctMat + ' % de ' + ({ ingresos: 'los ingresos', activos: 'los activos', utilidad: 'la utilidad' })[c.mat.base] + '), ejecución de B/. ' + fmt(c.mat.ejec) + ' y trivialidad de B/. ' + fmt(c.mat.triv) + '.');
+  var elegida = e.dictamen && e.dictamen.opinion ? OPINIONES.filter(function (o) { return o.id === e.dictamen.opinion; })[0] : null;
+  par.push('Opinión: ' + (elegida ? elegida.nombre.toLowerCase() + '.' : 'aún no se elige. Con la información actual el sistema sugiere ' + OPINIONES.filter(function (o) { return o.id === c.op.id; })[0].nombre.toLowerCase() + '.') + (c.op.motivos.length ? ' ' + c.op.motivos.join(' ') : ''));
+  var crit = [];
+  mx.filter(function (m) { return m.nivel === 'Alto'; }).forEach(function (m) { crit.push(m.area + ': ' + m.riesgo + '. ' + m.evid); });
+  act.forEach(function (a) { var q = ajusteCuadrado(a); crit.push('Ajuste ' + a.n + ' (aceptado): ' + (a.descripcion || 'sin descripción') + ' Monto B/. ' + fmt(q.debe) + '.'); });
+  if (dif.nivel !== 'ninguna') crit.push('Diferencias no corregidas: la mayor es B/. ' + fmt(dif.mayor) + ' (' + dif.nivel + ' frente a la materialidad).');
+  var pend = [];
+  var sinConc = c.rubros.filter(function (r) { return conclusionSugerida(e, r.id) === 'Pendiente'; }).length;
+  if (sinConc) pend.push(sinConc + ' rubro(s) con pruebas pendientes de concluir.');
+  if (c.rs && c.rs.pendientes) pend.push(c.rs.pendientes + ' alerta(s) del diario sin revisar.');
+  if (!c.an) pend.push('No se cargó el libro diario.');
+  var props = (e.ajustes || []).filter(function (a) { return a.estado === 'Propuesto'; }).length;
+  if (props) pend.push(props + ' ajuste(s) propuesto(s) sin decisión del propietario.');
+  return { parrafos: par, criticos: crit, pendientes: pend };
+}
+
+/* ---------- Vista del módulo ---------- */
+function revisadoCheck(e, p) {
+  return '<label class="chk noprint"><input type="checkbox" data-k="informe.rev.p' + p + '"' + (e.informe.rev['p' + p] ? ' checked' : '') + ' data-nr="1"><span>Revisado por el auditor</span></label>';
+}
+function cuerpoParte(e, p) {
+  var c, h = '';
+  if (p === 1) {
+    c = ctxInforme(e);
+    h += '<p class="mut">Estados auditados con los ajustes aceptados. Las notas se editan en el módulo 8.</p>';
+    h += '<table class="kv"><tr><td></td><td class="num"><b>Libros</b></td><td class="num"><b>Auditado</b></td></tr>' +
+      [['Ingresos', 'ing'], ['Utilidad neta', 'ni'], ['Activos', 'activos'], ['Pasivos', 'pasivos'], ['Patrimonio', 'patrimonio']].map(function (x) { return '<tr><td>' + x[0] + '</td><td class="num">' + fmt(c.pre.n[x[1]]) + '</td><td class="num">' + fmt(c.aud.n[x[1]]) + '</td></tr>'; }).join('') + '</table>';
+    h += encabezadoEstado('Balance general') + tablaEstado(c.aud.bg) + encabezadoEstado('Estado de resultados') + tablaEstado(c.aud.er) +
+      encabezadoEstado('Estado de cambios en el patrimonio') + tablaECP(c.aud.ecp) + encabezadoEstado('Estado de flujos de efectivo (método indirecto)') + tablaEstado(c.aud.fe);
+    h += '<h3>Notas a los estados financieros</h3>';
+    notasAuto(e, c.aud).forEach(function (nt) {
+      h += '<h4>' + esc(nt.t) + '</h4><p class="txt">' + esc(e.notas[nt.k] != null ? e.notas[nt.k] : nt.txt) + '</p>';
+      if (nt.tabla) h += '<table class="est">' + nt.tabla.map(function (f) { return '<tr' + (f[1] === null ? ' class="tit"' : '') + '><td>' + esc(f[0]) + '</td><td class="num">' + (f[1] === null ? '' : fmt(f[1], true)) + '</td></tr>'; }).join('') + '</table>';
+    });
+  } else if (p === 2) {
+    var r = resumenEjecutivo(e);
+    r.parrafos.forEach(function (t) { h += '<p>' + esc(t) + '</p>'; });
+    h += '<h4>Hallazgos críticos</h4>' + (r.criticos.length ? '<ul class="vals">' + r.criticos.map(function (t) { return '<li class="no">' + esc(t) + '</li>'; }).join('') + '</ul>' : '<p class="okt">No hay hallazgos de nivel alto con la información cargada.</p>');
+    h += '<h4>Pendientes antes de emitir el informe</h4>' + (r.pendientes.length ? '<ul class="vals">' + r.pendientes.map(function (t) { return '<li class="no">' + esc(t) + '</li>'; }).join('') + '</ul>' : '<p class="okt">Sin pendientes detectados.</p>');
+    h += campo('Comentarios del auditor (se agregan al resumen)', 'informe.coment', e.informe.coment || '', { tipo: 'area', filas: 4 });
+    if (e.informe.coment) h += '<p class="soloimp">' + esc(e.informe.coment) + '</p>';
+  } else if (p === 3) {
+    var mx = matrizRiesgos(e), nAlto = mx.filter(function (m) { return m.nivel === 'Alto'; }).length;
+    h += '<p class="mut">' + mx.length + ' riesgos: ' + nAlto + ' altos. Puede cambiar el nivel de cada fila si su criterio es otro.</p>';
+    mx.forEach(function (m) {
+      h += '<div class="mx"><div class="mx-t">' + chipNivel(m.nivel) + '<b>' + esc(m.area) + '</b></div><p><span class="mut">Riesgo:</span> ' + esc(m.riesgo) + '</p><p><span class="mut">Evidencia:</span> ' + esc(m.evid) + '</p>' +
+        '<label class="campo noprint"><span>Nivel' + (m.nivel !== m.nivelAuto ? ' (el sistema calculó ' + m.nivelAuto + ')' : '') + '</span><select data-k="informe.nv.' + m.k + '">' + ['Alto', 'Medio', 'Bajo'].map(function (x) { return '<option' + (m.nivel === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select></label></div>';
+    });
+  } else if (p === 4) {
+    var g = guiaPruebas(e);
+    h += '<p class="mut">Muestreo por unidad monetaria: n = saldo × factor ÷ error tolerable. El error tolerable es la materialidad de ejecución (B/. ' + fmt(g.mat.ejec) + '). El factor de confianza (3.0 alto, 2.3 medio, 1.6 bajo) supone cero errores esperados. La NIA 530 no fija tamaños: ajuste con su criterio.</p>';
+    g.filas.forEach(function (f) {
+      h += '<div class="mx"><div class="mx-t">' + chipNivel(f.nivel) + '<b>' + esc(f.ref + ' · ' + f.rubro) + '</b></div>' +
+        '<p><span class="mut">Saldo auditado:</span> B/. ' + fmt(f.saldo) + ' · <span class="mut">Cuentas:</span> ' + f.cuentas + (f.lineas ? ' · <span class="mut">Líneas del diario:</span> ' + f.lineas : '') + '</p>' +
+        '<p><span class="mut">Tamaño de muestra:</span> ' + (f.n === null ? 'n/d' : '<b>' + f.n + '</b> (factor ' + f.factor.toFixed(1) + (f.interv ? ', intervalo B/. ' + fmt(f.interv) : '') + ')') + '</p><p>' + esc(f.texto) + '</p>' +
+        '<p><span class="mut">Cómo seleccionar:</span> ' + esc(f.criterio) + '</p><p><span class="mut">Obtener:</span> ' + esc(f.docs) + '</p><p class="mut">Aserciones: ' + esc(f.aserciones) + '</p></div>';
+    });
+    if (!g.filas.length) h += '<p class="mut">No hay rubros con saldo.</p>';
+  } else if (p === 5) {
+    var rc = recomendacionesControl(e);
+    h += '<p class="mut">Recomendaciones derivadas de los riesgos y hallazgos. El botón las lleva a la carta de recomendaciones (módulo 9) sin repetir las que ya están.</p>';
+    rc.forEach(function (o) {
+      h += '<div class="mx"><div class="mx-t">' + chipNivel(o.riesgo || 'Medio') + '<b>' + esc(o.area) + '</b></div><p><span class="mut">Observación:</span> ' + esc(o.obs) + '</p><p><span class="mut">Recomendación:</span> ' + esc(o.rec) + '</p><p class="mut">' + esc(o.origen) + '</p></div>';
+    });
+    h += '<div class="botones noprint"><button class="btn sec" data-act="infAcarta">Pasar a la carta de recomendaciones</button></div>';
+  } else if (p === 6) {
+    var d = e.dictamen, op = opinionSugerida(e);
+    if (!d.opinion) h += '<p class="mal">Aún no eligió el tipo de opinión. Hágalo en el módulo 10; el sistema sugiere: ' + esc(OPINIONES.filter(function (o) { return o.id === op.id; })[0].nombre) + '.</p>';
+    else {
+      h += '<h3>Informe del auditor independiente</h3>';
+      textosInforme(e, d.opinion).forEach(function (s) { h += '<h4>' + esc(s.h) + '</h4>' + (s.p ? '<p class="txt">' + esc(s.p) + '</p>' : ''); });
+    }
+    h += '<h3>Certificación</h3><p class="txt">' + esc(textoCertificacion(e)) + '</p><h3>Interpretación final</h3><p class="txt">' + esc(interpretacionFinal(e)) + '</p>';
+  } else {
+    otrosTemas(e).forEach(function (o) {
+      h += '<div class="mx"><div class="mx-t">' + chipNivel(o.nivel) + '<b>' + esc(o.t) + '</b><span class="mut"> · ' + esc(o.nia) + '</span></div><p>' + esc(o.txt) + '</p></div>';
+    });
+  }
+  return h;
+}
+function vInforme(e, res) {
+  var tab = UI.tabInf || 2;
+  var h = '<section class="card"><h2>11. Informe de auditoría</h2><p class="mut">Informe en 7 partes armado con los datos del encargo. Revise cada parte y márquela. Los textos son un borrador: el criterio profesional es suyo.</p>' + listaVal(res, 11) +
+    '<div class="seg pestanas noprint">' + PARTES_INFORME.map(function (x) { return '<button class="' + (tab === x.n ? 'act' : '') + '" data-act="tabInf" data-t="' + x.n + '">' + x.n + '</button>'; }).join('') + '<button class="' + (tab === 'todo' ? 'act' : '') + '" data-act="tabInf" data-t="todo">Todo</button></div>' +
+    '<p class="mut noprint">' + (tab === 'todo' ? 'Informe completo, listo para imprimir o guardar como PDF.' : 'Parte ' + tab + ': ' + PARTES_INFORME[tab - 1].t) + '</p></section>';
+  var partes = tab === 'todo' ? PARTES_INFORME : [PARTES_INFORME[tab - 1]];
+  partes.forEach(function (x) {
+    h += '<section class="card parte"><h3>Parte ' + x.n + '. ' + esc(x.t) + '</h3>' + cuerpoParte(e, x.n) + (x.n !== 1 && x.n !== 6 ? revisadoCheck(e, x.n) : '') + '</section>';
+  });
+  h += '<section class="card noprint"><div class="botones col"><button class="btn sec" data-act="imprimir">Imprimir o guardar PDF</button><button class="btn" data-act="xlsx" data-m="todo">Libro de auditoría completo (Excel)</button></div></section>';
+  return h;
+}
+
+function clickInforme(t, a, e) {
+  if (a === 'tabInf') { UI.tabInf = t.dataset.t === 'todo' ? 'todo' : parseInt(t.dataset.t, 10); refrescar(); window.scrollTo(0, 0); return true; }
+  if (a === 'infAcarta') {
+    var cur = e.cartas.obs, nuevas = 0;
+    recomendacionesControl(e).forEach(function (o) {
+      if (cur.some(function (x) { return x.obs === o.obs && x.rec === o.rec; })) return;
+      cur.push({ area: o.area, obs: o.obs, riesgo: o.riesgo, rec: o.rec, resp: '' }); nuevas++;
+    });
+    guardar(); refrescar(); aviso(nuevas + ' observación(es) agregada(s) a la carta');
+    return true;
+  }
+  return false;
+}
+
+/* ---------- Hojas de Excel del informe ---------- */
+function hojasInforme(e) {
+  var H = function (a) { return a.map(function (x) { return { v: x, s: 'h' }; }); }, out = [];
+  var idx = [[{ v: 'Informe de auditoría: contenido', s: 't' }], [], H(['Parte', 'Contenido', 'Hoja o módulo'])];
+  idx.push(['1', 'Estados financieros auditados con notas', 'BG-Auditado, ER-Auditado, ECP-Auditado, FE-Auditado, Notas']);
+  idx.push(['2', 'Resumen ejecutivo', 'Inf2-Resumen']); idx.push(['3', 'Matriz de riesgos', 'Inf3-Matriz']); idx.push(['4', 'Guía de ejecución de pruebas', 'Inf4-Guia-Pruebas']);
+  idx.push(['5', 'Recomendaciones de control interno', 'Inf5-Control']); idx.push(['6', 'Certificación con dictamen e interpretación', 'Informe']); idx.push(['7', 'Otros temas de auditoría', 'Inf7-Otros']);
+  out.push({ nombre: 'Inf-Indice', anchos: [8, 50, 70], filas: idx });
+  var r = resumenEjecutivo(e), s = [[{ v: 'Resumen ejecutivo', s: 't' }], []];
+  r.parrafos.forEach(function (t) { s.push([{ v: t, s: 'w' }]); });
+  s.push([{ v: 'Hallazgos críticos', s: 'b' }]); (r.criticos.length ? r.criticos : ['Sin hallazgos de nivel alto.']).forEach(function (t) { s.push([{ v: t, s: 'w' }]); });
+  s.push([]); s.push([{ v: 'Pendientes antes de emitir', s: 'b' }]); (r.pendientes.length ? r.pendientes : ['Ninguno.']).forEach(function (t) { s.push([{ v: t, s: 'w' }]); });
+  if (e.informe.coment) { s.push([]); s.push([{ v: 'Comentarios del auditor', s: 'b' }]); s.push([{ v: e.informe.coment, s: 'w' }]); }
+  out.push({ nombre: 'Inf2-Resumen', anchos: [120], filas: s });
+  var m = [[{ v: 'Matriz de riesgos', s: 't' }], [], H(['Área', 'Riesgo', 'Nivel', 'Evidencia'])];
+  matrizRiesgos(e).forEach(function (x) { m.push([x.area, { v: x.riesgo, s: 'w' }, x.nivel, { v: x.evid, s: 'w' }]); });
+  out.push({ nombre: 'Inf3-Matriz', anchos: [32, 60, 10, 80], filas: m });
+  var g = guiaPruebas(e), q = [[{ v: 'Guía de ejecución de pruebas y muestras', s: 't' }], [{ v: 'Error tolerable: ejecución B/. ' + fmt(g.mat.ejec) + '. Muestreo por unidad monetaria, factores 3.0 / 2.3 / 1.6 según riesgo alto / medio / bajo, sin errores esperados.', s: 'w' }], [],
+    H(['Ref.', 'Rubro', 'Saldo auditado', 'Riesgo', 'Factor', 'Muestra', 'Intervalo', 'Líneas del diario', 'Indicación', 'Cómo seleccionar', 'Documentos'])];
+  g.filas.forEach(function (f) { q.push([f.ref, f.rubro, f.saldo, f.nivel, f.factor, f.n === null ? 'n/d' : f.n, f.interv === null ? 'n/d' : f.interv, f.lineas, { v: f.texto, s: 'w' }, { v: f.criterio, s: 'w' }, { v: f.docs, s: 'w' }]); });
+  out.push({ nombre: 'Inf4-Guia-Pruebas', anchos: [8, 30, 16, 10, 8, 9, 12, 12, 50, 60, 50], filas: q });
+  var c = [[{ v: 'Recomendaciones de control interno', s: 't' }], [], H(['Área', 'Riesgo', 'Observación', 'Recomendación', 'Origen'])];
+  recomendacionesControl(e).forEach(function (o) { c.push([o.area, o.riesgo, { v: o.obs, s: 'w' }, { v: o.rec, s: 'w' }, o.origen]); });
+  out.push({ nombre: 'Inf5-Control', anchos: [28, 10, 60, 60, 22], filas: c });
+  var ot = [[{ v: 'Otros temas de auditoría', s: 't' }], [], H(['Tema', 'Norma', 'Nivel', 'Comentario'])];
+  otrosTemas(e).forEach(function (o) { ot.push([o.t, o.nia, o.nivel, { v: o.txt, s: 'w' }]); });
+  out.push({ nombre: 'Inf7-Otros', anchos: [34, 14, 10, 110], filas: ot });
+  return out;
+}
+/* FIN DEL ARCHIVO informe.js */
+
+</script>
+<script>
 /* app.js - Interfaz de la app de auditoría (módulos 1 a 9) */
 'use strict';
 
 var CLAVE = 'auditoria.pa.v1';
-var VERSION_APP = 'B2.3';
+var VERSION_APP = 'B3.0';
 var PASOS = [
   { n: 1, t: 'Encargo' }, { n: 2, t: 'Balanza' }, { n: 3, t: 'Planificación' }, { n: 4, t: 'Diario' }, { n: 5, t: 'Pruebas' }, { n: 6, t: 'Ajustes' },
-  { n: 7, t: 'Balanza auditada' }, { n: 8, t: 'Estados' }, { n: 9, t: 'Cartas' }, { n: 10, t: 'Dictamen' }, { n: 11, t: 'Control' }, { n: 12, t: 'Exportar' }
+  { n: 7, t: 'Balanza auditada' }, { n: 8, t: 'Estados' }, { n: 9, t: 'Cartas' }, { n: 10, t: 'Dictamen' }, { n: 11, t: 'Informe' }, { n: 12, t: 'Control' }, { n: 13, t: 'Exportar' }
 ];
 var ESTADO = cargar();
 var UI = { tab: 'bg', modo: 'audit', draft: null, abiertos: {}, todos: false, impOpen: false };
@@ -2335,12 +2731,12 @@ function render() {
   asegurarEmp(e);
   var res = valApp(e);
   nav.innerHTML = PASOS.map(function (p) {
-    var st = p.n <= 11 ? estadoModulo(res, p.n) : 'na';
+    var st = p.n <= 12 ? estadoModulo(res, p.n) : 'na';
     return '<button class="paso' + (ESTADO.paso === p.n ? ' act' : '') + '" data-act="paso" data-n="' + p.n + '"><i class="pt ' + st + '"></i>' + p.n + '. ' + p.t + '</button>';
   }).join('');
-  var vistas = { 1: vPaso1, 2: vPaso2, 3: vPaso3, 4: vDiario, 5: vPaso4, 6: vPaso5, 7: vPaso6, 8: vPaso7, 9: vCartas, 10: vPaso8, 11: vControl, 12: vPaso9 };
+  var vistas = { 1: vPaso1, 2: vPaso2, 3: vPaso3, 4: vDiario, 5: vPaso4, 6: vPaso5, 7: vPaso6, 8: vPaso7, 9: vCartas, 10: vPaso8, 11: vInforme, 12: vControl, 13: vPaso9 };
   vista.innerHTML = vistas[ESTADO.paso](e, res);
-  pie.innerHTML = '<button class="btn sec" data-act="ant"' + (ESTADO.paso <= 1 ? ' disabled' : '') + '>← Anterior</button><button class="btn" data-act="sig"' + (ESTADO.paso >= 12 ? ' disabled' : '') + '>Siguiente →</button>';
+  pie.innerHTML = '<button class="btn sec" data-act="ant"' + (ESTADO.paso <= 1 ? ' disabled' : '') + '>← Anterior</button><button class="btn" data-act="sig"' + (ESTADO.paso >= 13 ? ' disabled' : '') + '>Siguiente →</button>';
   if (ESTADO.paso === 2) actualizarTotales();
 }
 function refrescar() {
@@ -2359,7 +2755,7 @@ function vInicio() {
   else h += '<p class="mut">Toque un encargo para abrirlo. Allí, en el módulo 1, se escribe y cambia el nombre.</p>';
   ids.forEach(function (id) {
     var e = ESTADO.empresas[id]; asegurarEmp(e); var res = valApp(e);
-    var pts = PASOS.slice(0, 11).map(function (p) { return '<i class="pt ' + estadoModulo(res, p.n) + '"></i>'; }).join('');
+    var pts = PASOS.slice(0, 12).map(function (p) { return '<i class="pt ' + estadoModulo(res, p.n) + '"></i>'; }).join('');
     h += '<button class="fila-emp" data-act="abrir" data-id="' + id + '"><b>' + esc(e.encargo.nombre || 'Sin nombre') + '</b><small>Ejercicio ' + esc(e.encargo.anio || '') + ' · ' + esc(e.encargo.estado) + ' · ' + e.cuentas.length + ' cuentas · ' + fmt(totalHoras(e)) + (e.encargo.horasPres ? ' de ' + fmt(e.encargo.horasPres) : '') + ' h' + (e.encargo.fechaEntrega ? ' · entrega ' + esc(e.encargo.fechaEntrega) : '') + '</small><span class="pts">' + pts + '</span></button>';
   });
   h += '<div class="botones"><button class="btn" data-act="nueva">+ Nuevo encargo</button><button class="btn sec" data-act="ejemplo">Cargar ejemplo</button></div></section>';
@@ -2662,10 +3058,10 @@ function vPaso8(e, res) {
 
 /* ---------- Paso 9: Exportar y respaldo ---------- */
 function vPaso9(e) {
-  return '<section class="card"><h2>12. Exportar y respaldo</h2><p class="mut">Los libros se generan en el teléfono. Los totales de las balanzas llevan fórmulas de Excel.</p>' +
+  return '<section class="card"><h2>13. Exportar y respaldo</h2><p class="mut">Los libros se generan en el teléfono. Los totales de las balanzas llevan fórmulas de Excel.</p>' +
     '<div class="botones col"><button class="btn" data-act="xlsx" data-m="todo">Libro de auditoría completo (Excel)</button><button class="btn sec" data-act="xlsx" data-m="prelim">Solo fase 1: estados no auditados y análisis</button><button class="btn sec" data-act="imprimir">Imprimir o guardar PDF de la pantalla actual</button></div></section>' +
     '<section class="card"><h3>Respaldo de datos</h3><div class="botones col"><button class="btn sec" data-act="respaldo">Descargar respaldo de todos los encargos</button><label class="btn sec">Importar respaldo<input type="file" accept=".json,application/json" data-act="subirRespaldo" hidden></label></div></section>' +
-    '<section class="card"><h3>Próximos bloques</h3><ul class="vals"><li>Bloque 3: informe ejecutivo, matriz de riesgos, guía de muestras y control interno.</li><li>Bloque 4: conexión de solo lectura con la app contable y respaldos.</li></ul><p class="mut">Versión ' + VERSION_APP + '</p></section>';
+    '<section class="card"><h3>Próximos bloques</h3><ul class="vals"><li>Bloque 4: conexión de solo lectura con la app contable y respaldos.</li></ul><p class="mut">Versión ' + VERSION_APP + '</p></section>';
 }
 
 /* ---------- Exportación a Excel ---------- */
@@ -2723,7 +3119,7 @@ function libroExcel(e, modo) {
   var mat = materialidad(e, pre), c = e.encargo, hojas = [];
   var res = valApp(e);
   var por = [[{ v: 'Auditoría externa', s: 't' }], [], ['Cliente', c.nombre], ['Propietario', c.propietario], ['Actividad', c.actividad], ['Ejercicio', c.anio], ['Cierre', fechaLarga(c.fechaCierre)], ['Marco', c.marco], ['Contribuyente ITBMS', c.itbms], ['Auditor', ESTADO.auditor.nombre], ['Idoneidad CPA', ESTADO.auditor.idoneidad], [], [{ v: 'Materialidad global', s: 'b' }, { v: mat.mat, s: 'n' }], ['Materialidad de ejecución', { v: mat.ejec, s: 'n' }], ['Umbral trivial', { v: mat.triv, s: 'n' }], [], [{ v: 'Estado de los módulos', s: 'b' }]];
-  PASOS.slice(0, 11).forEach(function (p) { var l = res[p.n] || []; por.push([p.n + '. ' + p.t, l.filter(function (x) { return x.ok; }).length + ' de ' + l.length + ' controles cumplidos']); });
+  PASOS.slice(0, 12).forEach(function (p) { var l = res[p.n] || []; por.push([p.n + '. ' + p.t, l.filter(function (x) { return x.ok; }).length + ' de ' + l.length + ' controles cumplidos']); });
   hojas.push({ nombre: 'Portada', anchos: [30, 50], filas: por });
   hojas.push(hojaTB(e, 'Balanza de comprobación preliminar', 'prelim'));
   hojas.push(hojaEst(e, 'BG-NoAuditado', 'Balance general (no auditado)', pre.bg));
@@ -2770,11 +3166,12 @@ function libroExcel(e, modo) {
     hojas.push({ nombre: 'Notas', anchos: [110, 18], filas: nt });
     var inf = [[{ v: 'Informe del auditor independiente', s: 't' }], []];
     if (e.dictamen.opinion) textosInforme(e, e.dictamen.opinion).forEach(function (s) { inf.push([{ v: s.h, s: 'b' }]); if (s.p) inf.push([{ v: s.p, s: 'w' }]); inf.push([]); });
-    else inf.push(['Pendiente: elija el tipo de opinión en el módulo 8.']);
+    else inf.push(['Pendiente: elija el tipo de opinión en el módulo 10.']);
     inf.push([{ v: 'Certificación', s: 'b' }]); inf.push([{ v: textoCertificacion(e), s: 'w' }]); inf.push([]);
     inf.push([{ v: 'Interpretación final', s: 'b' }]); inf.push([{ v: interpretacionFinal(e), s: 'w' }]);
     hojas.push({ nombre: 'Informe', anchos: [120], filas: inf });
     hojasExtra(e).forEach(function (hh) { hojas.push(hh); });
+    hojasInforme(e).forEach(function (hh) { hojas.push(hh); });
   }
   return hojas;
 }
@@ -2799,6 +3196,7 @@ function onClick(ev) {
   var a = t.dataset.act, e = ESTADO.actual ? emp() : null;
   if (t.tagName === 'INPUT' && t.type === 'file') return;
   if (clickLock(t, a) || clickInst(t, a)) return;
+  if (e && clickInforme(t, a, e)) return;
   if (clickExtra(t, a, e)) return;
   if (a === 'inicio') { ESTADO.paso = 0; guardar(); render(); }
   else if (a === 'abrir') { ESTADO.actual = t.dataset.id; ESTADO.paso = 1; guardar(); render(); window.scrollTo(0, 0); }
@@ -2809,7 +3207,7 @@ function onClick(ev) {
     ex.cuentas = datosEjemplo(); ESTADO.empresas[ex.id] = ex; ESTADO.actual = ex.id; ESTADO.paso = 2; guardar(); render();
   }
   else if (a === 'paso') irPaso(parseInt(t.dataset.n, 10));
-  else if (a === 'sig') irPaso(Math.min(12, ESTADO.paso + 1));
+  else if (a === 'sig') irPaso(Math.min(13, ESTADO.paso + 1));
   else if (a === 'ant') irPaso(Math.max(1, ESTADO.paso - 1));
   else if (a === 'borrarEmpresa') { if (confirm('¿Eliminar este encargo y todos sus datos? Esta acción no se puede deshacer.')) { delete ESTADO.empresas[ESTADO.actual]; ESTADO.actual = null; ESTADO.paso = 0; guardar(); render(); } }
   else if (a === 'addCuenta') { e.cuentas.push({ cod: '', nombre: '', rubro: '', si: 0, m: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], pa: 0 }); guardar(); refrescar(); }
